@@ -25,6 +25,7 @@
 #include "ac_cache.h"           // ac_cache_create, ac_cache_destroy
 #include "ac_data.h"            // ac_data_create, ac_data_destroy
 #include "input-common.h"       // sample_format_t, input_create
+#include "input-mcr.h"          // mcr_input_preload_config
 #include "input-helpers.h"      // sample_format_from_string
 #include "output-common.h"      // output_*, fmtr_*
 #include "kvargs.h"             // kvargs
@@ -248,6 +249,9 @@ static void usage() {
 	fprintf(stderr, "\nRead I/Q samples from file:\n\n"
 			"%*sdumphfdl [output_options] --iq-file <input_iq_file> [iq_file_options] <freq_1> [<freq_2> [...]]\n",
 			IND(1), "");
+	fprintf(stderr, "\nRead multichannel MCR recording from file:\n\n"
+			"%*sdumphfdl [output_options] --mcr-file <input_mcr_file> [mcr_file_options] <freq_1> [<freq_2> [...]]\n",
+			IND(1), "");
 	fprintf(stderr, "\nGeneral options:\n");
 	describe_option("--help", "Displays this text", 1);
 	describe_option("--version", "Displays program version number", 1);
@@ -281,6 +285,13 @@ static void usage() {
 	describe_option("CS16", "16-bit signed, little-endian (eg. recorded with sdrplay)", 2);
 	describe_option("CF32", "32-bit float, little-endian (eg. Airspy HF+)", 2);
 	describe_option("--read-buffer-size <integer>", "Number of bytes to read from file in one batch", 1);
+
+	fprintf(stderr, "\nmcr_file_options:\n");
+	describe_option("--mcr-file <string>", "Read multichannel MCR recording from file", 1);
+	describe_option("--bearing <float>", "Bearing of the wanted signal in degrees (default: 0)", 1);
+	describe_option("--elevation <float>", "Elevation angle in degrees (default: 0)", 1);
+	describe_option("--sample-rate <integer>", "Override the sampling rate read from the MCR header", 1);
+	describe_option("--centerfreq <float>", "Override the center frequency read from the MCR header, in kHz", 1);
 
 	fprintf(stderr, "\nOutput options:\n");
 	describe_option("--output <output_specifier>", "Output specification (default: " DEFAULT_OUTPUT ")", 1);
@@ -334,6 +345,9 @@ int32_t main(int32_t argc, char **argv) {
 #ifdef WITH_SOAPYSDR
 #define OPT_SOAPYSDR 11
 #endif
+#define OPT_MCR_FILE 12
+#define OPT_MCR_BEARING 13
+#define OPT_MCR_ELEVATION 14
 
 #define OPT_SAMPLE_FORMAT 20
 #define OPT_SAMPLE_RATE 21
@@ -388,6 +402,9 @@ int32_t main(int32_t argc, char **argv) {
 #ifdef WITH_SOAPYSDR
 		{ "soapysdr",           required_argument,  NULL,   OPT_SOAPYSDR },
 #endif
+		{ "mcr-file",           required_argument,  NULL,   OPT_MCR_FILE },
+		{ "bearing",            required_argument,  NULL,   OPT_MCR_BEARING },
+		{ "elevation",          required_argument,  NULL,   OPT_MCR_ELEVATION },
 		{ "sample-format",      required_argument,  NULL,   OPT_SAMPLE_FORMAT },
 		{ "sample-rate",        required_argument,  NULL,   OPT_SAMPLE_RATE },
 		{ "centerfreq",         required_argument,  NULL,   OPT_CENTERFREQ },
@@ -452,6 +469,21 @@ int32_t main(int32_t argc, char **argv) {
 				Config.output_queue_hwm = OUTPUT_QUEUE_HWM_NONE;
 				input_cfg->source = optarg;
 				input_cfg->type = INPUT_TYPE_FILE;
+				break;
+			case OPT_MCR_FILE:
+				Config.output_queue_hwm = OUTPUT_QUEUE_HWM_NONE;
+				input_cfg->source = optarg;
+				input_cfg->type = INPUT_TYPE_MCR;
+				break;
+			case OPT_MCR_BEARING:
+				if(parse_double(optarg, &input_cfg->bearing) == false) {
+					return 1;
+				}
+				break;
+			case OPT_MCR_ELEVATION:
+				if(parse_double(optarg, &input_cfg->elevation) == false) {
+					return 1;
+				}
 				break;
 #ifdef WITH_SOAPYSDR
 			case OPT_SOAPYSDR:
@@ -622,6 +654,14 @@ int32_t main(int32_t argc, char **argv) {
 	if(input_cfg->source == NULL) {
 		fprintf(stderr, "No input specified\n");
 		return 1;
+	}
+	// For MCR inputs, read the file header early, so that the sample rate
+	// and center frequency stored in it can be used for the checks below
+	// (unless the user has overridden them on the command line).
+	if(input_cfg->type == INPUT_TYPE_MCR) {
+		if(mcr_input_preload_config(input_cfg) < 0) {
+			return 1;
+		}
 	}
 	int32_t channel_cnt = argc - optind;
 	if(channel_cnt < 1) {

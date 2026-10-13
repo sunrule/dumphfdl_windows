@@ -901,6 +901,42 @@ dumphfdl --iq-file iq.cs16 --sample-rate 250000 --sample-format CS16 --centerfre
 
 processes `iq.dat` file recorded at 250000 samples/sec using 16-bit signed samples, with receiver center frequency set to 10000 kHz (10 MHz) using default read buffer size. The program will monitor HFDL channels located at 10063, 10081 and 10084 kHz.
 
+## Processing multichannel MCR recordings
+
+Multichannel MCR recordings (as produced by some direction finding
+receivers) can be decoded directly, without a prior conversion step:
+
+```sh
+dumphfdl [output_options] --mcr-file <input_mcr_file> [mcr_file_options] <freq_1> [<freq_2> [...]]
+```
+
+All channels of the recording are combined into a single complex I/Q
+stream, using the calibration coefficients stored in the file. A phase
+correction, derived from the given bearing and elevation, is applied to
+the coefficients before combining. This steers the combined beam towards
+the wanted direction.
+
+Options:
+
+- `--mcr-file <string>` - read multichannel MCR recording from file
+- `--bearing <float>` - bearing of the wanted signal, in degrees (default: 0)
+- `--elevation <float>` - elevation angle, in degrees (default: 0)
+- `--sample-rate <integer>` - override the sampling rate read from the MCR header
+- `--centerfreq <float>` - override the center frequency read from the MCR header, in kHz
+
+The sampling rate and center frequency are read from the MCR file header
+automatically. They can be overridden with `--sample-rate` and
+`--centerfreq` respectively.
+
+Example:
+
+```sh
+dumphfdl --mcr-file recording.mcr --bearing 45 --elevation 10 8912.0 8944.0
+```
+
+decodes a recording with the beam steered towards 45 degrees bearing and
+10 degrees elevation, monitoring HFDL channels at 8912 and 8944 kHz.
+
 ## Launching dumphfdl as a service on system boot
 
 There is an example systemd unit file in `etc` subdirectory (which means you need a systemd-based distribution, like Debian/RaspberryPi OS Jessie or newer).

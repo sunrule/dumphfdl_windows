@@ -6,12 +6,14 @@
 #include "input-common.h"
 #include "input-helpers.h"      // get_sample_converter
 #include "input-file.h"         // file_input_vtable
+#include "input-mcr.h"          // mcr_input_vtable
 #ifdef WITH_SOAPYSDR
 #include "input-soapysdr.h"     // soapysdr_input_vtable
 #endif
 
 static struct input_vtable *input_vtables[] = {
 	[INPUT_TYPE_FILE] = &file_input_vtable,
+	[INPUT_TYPE_MCR] = &mcr_input_vtable,
 #ifdef WITH_SOAPYSDR
 	[INPUT_TYPE_SOAPYSDR] = &soapysdr_input_vtable,
 #endif
@@ -33,6 +35,8 @@ struct input_cfg *input_cfg_create() {
 	cfg->read_buffer_size = -1;
 	cfg->sfmt = SFMT_UNDEF;
 	cfg->gain = AUTO_GAIN;
+	cfg->bearing = 0.0;
+	cfg->elevation = 0.0;
 	return cfg;
 }
 
@@ -73,13 +77,18 @@ int32_t input_init(struct block *block) {
 	ASSERT(input->full_scale > 0.f);
 	ASSERT(block->producer.max_tu > 0);
 
-	// Provide sample converter from the native format to complex float
-	input->convert_sample_buffer = get_sample_converter(input->config->sfmt);
+	// Provide sample converter from the native format to complex float.
+	// Input drivers which need a custom converter (eg. MCR, which combines
+	// multiple channels into one) set it in their init() routine; in that
+	// case don't overwrite it with a generic sample format converter.
 	if(input->convert_sample_buffer == NULL) {
-		fprintf(stderr, "No sample conversion routine found for sample format %d\n",
-				input->config->sfmt);
-		ret = -1;
-		goto end;
+		input->convert_sample_buffer = get_sample_converter(input->config->sfmt);
+		if(input->convert_sample_buffer == NULL) {
+			fprintf(stderr, "No sample conversion routine found for sample format %d\n",
+					input->config->sfmt);
+			ret = -1;
+			goto end;
+		}
 	}
 	// TODO: Lookup converters of other, non-native formats supported by the device
 

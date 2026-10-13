@@ -11,6 +11,7 @@ typedef enum {
 	INPUT_TYPE_SOAPYSDR,
 #endif
 	INPUT_TYPE_FILE,
+	INPUT_TYPE_MCR,
 	INPUT_TYPE_MAX
 } input_type;
 
@@ -31,6 +32,8 @@ struct input_cfg {
 	char *device_settings;
 	double gain;
 	double correction;
+	double bearing;                 // MCR input: bearing in degrees
+	double elevation;               // MCR input: elevation in degrees
 	int32_t sample_rate;
 	int32_t centerfreq;
 	int32_t freq_offset;

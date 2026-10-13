@@ -272,6 +272,7 @@ add_library (dumphfdl_base OBJECT
 	input-common.c
 	input-file.c
 	input-helpers.c
+	input-mcr.c
 	kvargs.c
 	libcsdr.c
 	libcsdr_gpl.c
