@@ -26,6 +26,15 @@ char const *systable_get_station_name(systable const *st, int32_t id);
 double systable_get_station_frequency(systable const *st, int32_t gs_id, int32_t freq_id);
 bool systable_is_available(systable const *st);
 
+// Collects all distinct frequencies from the system table which fall within
+// the band [centerfreq_hz - half_bandwidth_hz, centerfreq_hz + half_bandwidth_hz].
+// The result is sorted in ascending order. Returns a heap-allocated array of
+// frequencies in Hz and stores their count in *cnt_out (the caller must free
+// the array). Returns NULL if the system table is not available, no frequency
+// falls within the band, or on memory allocation failure.
+int32_t *systable_get_frequencies_in_band(systable const *st, int32_t centerfreq_hz,
+		int32_t half_bandwidth_hz, int32_t *cnt_out);
+
 void systable_store_pdu(systable const *st, int16_t version, uint8_t seq_num,
 		uint8_t pdu_set_len, uint8_t *buf, uint32_t len);
 la_proto_node *systable_process_pdu_set(systable *st);

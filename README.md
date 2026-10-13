@@ -937,6 +937,21 @@ dumphfdl --mcr-file recording.mcr --bearing 45 --elevation 10 8912.0 8944.0
 decodes a recording with the beam steered towards 45 degrees bearing and
 10 degrees elevation, monitoring HFDL channels at 8912 and 8944 kHz.
 
+### Automatic channel selection
+
+When the channel frequencies are omitted and `--system-table <file>` is
+given, the channels are selected automatically from the system table.
+Only the frequencies which fall within the band recorded in the MCR file
+(center frequency +/- half of the sample rate) are used:
+
+```sh
+dumphfdl --mcr-file recording.mcr --bearing 45 --elevation 10 --system-table systable.conf
+```
+
+The list of auto-selected channels is printed to stderr before decoding
+starts. Specifying the frequencies on the command line overrides the
+automatic selection.
+
 ## Launching dumphfdl as a service on system boot
 
 There is an example systemd unit file in `etc` subdirectory (which means you need a systemd-based distribution, like Debian/RaspberryPi OS Jessie or newer).

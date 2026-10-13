@@ -1,7 +1,8 @@
 #include <stdint.h>
 #include <stdbool.h>
-#include <string.h>                 // strdup
-#include <math.h>                   // fabs
+#include <stdlib.h>                // calloc, free, qsort
+#include <string.h>                // strdup
+#include <math.h>                  // fabs
 #include <libconfig.h>              // config_*
 #include <libacars/libacars.h>      // la_proto_node
 #include <libacars/dict.h>          // la_dict_*
@@ -260,6 +261,62 @@ double systable_get_station_frequency(systable const *st, int32_t gs_id, int32_t
 
 bool systable_is_available(systable const *st) {
 	return st != NULL && st->current->available;
+}
+
+static int freq_compare(void const *a, void const *b) {
+	int32_t fa = *(int32_t const *)a;
+	int32_t fb = *(int32_t const *)b;
+	return (fa > fb) - (fa < fb);
+}
+
+int32_t *systable_get_frequencies_in_band(systable const *st, int32_t centerfreq_hz,
+		int32_t half_bandwidth_hz, int32_t *cnt_out) {
+	ASSERT(cnt_out != NULL);
+	*cnt_out = 0;
+	if(!systable_is_available(st) || half_bandwidth_hz <= 0) {
+		return NULL;
+	}
+	// Upper bound on the number of frequencies in the table:
+	// STATION_ID_MAX stations x GS_MAX_FREQ_CNT frequencies each
+	size_t max_freqs = (size_t)STATION_ID_MAX * GS_MAX_FREQ_CNT;
+	int32_t *freqs = calloc(max_freqs, sizeof(int32_t));
+	if(freqs == NULL) {
+		return NULL;
+	}
+	int32_t lo = centerfreq_hz - half_bandwidth_hz;
+	int32_t hi = centerfreq_hz + half_bandwidth_hz;
+	size_t cnt = 0;
+	for(int32_t gs_id = 0; gs_id < STATION_ID_MAX; gs_id++) {
+		for(int32_t freq_id = 0; freq_id < GS_MAX_FREQ_CNT; freq_id++) {
+			double freq_khz = systable_get_station_frequency(st, gs_id, freq_id);
+			if(freq_khz < 0.0) {
+				continue;       // no such station or no more frequencies
+			}
+			int32_t freq_hz = (int32_t)(freq_khz * 1000.0);
+			if(freq_hz < lo || freq_hz > hi) {
+				continue;       // outside the band
+			}
+			// skip duplicates (the same frequency is often listed
+			// by multiple ground stations)
+			bool duplicate = false;
+			for(size_t i = 0; i < cnt; i++) {
+				if(freqs[i] == freq_hz) {
+					duplicate = true;
+					break;
+				}
+			}
+			if(!duplicate) {
+				freqs[cnt++] = freq_hz;
+			}
+		}
+	}
+	if(cnt == 0) {
+		free(freqs);
+		return NULL;
+	}
+	qsort(freqs, cnt, sizeof(int32_t), freq_compare);
+	*cnt_out = (int32_t)cnt;
+	return freqs;
 }
 
 void _systable_destroy(struct _systable *st) {

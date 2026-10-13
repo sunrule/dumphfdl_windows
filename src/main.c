@@ -297,6 +297,9 @@ static void usage() {
 	describe_option("--elevation <float>", "Elevation angle in degrees (default: 0)", 1);
 	describe_option("--sample-rate <integer>", "Override the sampling rate read from the MCR header", 1);
 	describe_option("--centerfreq <float>", "Override the center frequency read from the MCR header, in kHz", 1);
+	fprintf(stderr, "\nChannel frequencies may be omitted for MCR inputs when --system-table is given.\n");
+	fprintf(stderr, "In that case they are auto-selected from the system table, limited to the\n");
+	fprintf(stderr, "band recorded in the MCR file (center frequency +/- half of sample rate).\n");
 
 	fprintf(stderr, "\nOutput options:\n");
 	describe_option("--output <output_specifier>", "Output specification (default: " DEFAULT_OUTPUT ")", 1);
@@ -668,39 +671,10 @@ int32_t main(int32_t argc, char **argv) {
 			return 1;
 		}
 	}
-	int32_t channel_cnt = argc - optind;
-	if(channel_cnt < 1) {
-		fprintf(stderr, "No channel frequencies given\n");
-		return 1;
-	}
-	int32_t frequencies[channel_cnt];
-	for(int32_t i = 0; i < channel_cnt; i++) {
-		if(parse_frequency(argv[optind + i], &frequencies[i]) == false) {
-			return 1;
-		}
-	}
 
-	if(input_cfg->sample_rate < HFDL_SYMBOL_RATE * SPS) {
-		fprintf(stderr, "Sample rate must be greater or equal to %d\n", HFDL_SYMBOL_RATE * SPS);
-		return 1;
-	}
-
-	if(input_cfg->centerfreq < 0) {
-		if(compute_centerfreq(frequencies, channel_cnt, &input_cfg->centerfreq) == true) {
-			fprintf(stderr, "%s: computed center frequency: %.3f kHz\n", input_cfg->source, HZ_TO_KHZ(input_cfg->centerfreq));
-		} else {
-			fprintf(stderr, "%s: failed to compute center frequency\n", input_cfg->source);
-			return 2;
-		}
-	}
-	if(check_frequency_span(frequencies, channel_cnt, input_cfg->centerfreq, input_cfg->sample_rate) == false) {
-		return 1;
-	}
-	if(Config.output_queue_hwm < 0) {
-		fprintf(stderr, "Invalid --output-queue-hwm value: must be a non-negative integer\n");
-		return 1;
-	}
-
+	// Create the system table before parsing the channel frequencies, so
+	// that the frequencies can be auto-selected from it when the user did
+	// not give any on the command line (MCR inputs).
 	Systable = systable_create(systable_save_file);
 	if(systable_file != NULL) {
 		Systable_lock();
@@ -717,8 +691,69 @@ int32_t main(int32_t argc, char **argv) {
 		fprintf(stderr, "System table loaded from %s\n", systable_file);
 	}
 
+	int32_t channel_cnt = argc - optind;
+	int32_t *frequencies = NULL;
+	if(channel_cnt < 1) {
+		// No channel frequencies given on the command line.
+		// For MCR inputs with an available system table, auto-select
+		// the frequencies which fall within the recorded band.
+		if(input_cfg->type == INPUT_TYPE_MCR && systable_is_available(Systable)) {
+			int32_t half_bandwidth = input_cfg->sample_rate / 2;
+			frequencies = systable_get_frequencies_in_band(Systable,
+					input_cfg->centerfreq, half_bandwidth, &channel_cnt);
+			if(frequencies == NULL) {
+				fprintf(stderr, "No HFDL channels from the system table fall within "
+						"the recorded band (%.3f +/- %.3f kHz)\n",
+						HZ_TO_KHZ(input_cfg->centerfreq), HZ_TO_KHZ(half_bandwidth));
+				return 1;
+			}
+			fprintf(stderr, "Auto-selected %d channel(s) from the system table "
+					"within the recorded band:\n", channel_cnt);
+			for(int32_t i = 0; i < channel_cnt; i++) {
+				fprintf(stderr, "  %.3f kHz\n", HZ_TO_KHZ(frequencies[i]));
+			}
+		} else {
+			fprintf(stderr, "No channel frequencies given\n");
+			return 1;
+		}
+	} else {
+		frequencies = XCALLOC((size_t)channel_cnt, sizeof(int32_t));
+		for(int32_t i = 0; i < channel_cnt; i++) {
+			if(parse_frequency(argv[optind + i], &frequencies[i]) == false) {
+				XFREE(frequencies);
+				return 1;
+			}
+		}
+	}
+
+	if(input_cfg->sample_rate < HFDL_SYMBOL_RATE * SPS) {
+		fprintf(stderr, "Sample rate must be greater or equal to %d\n", HFDL_SYMBOL_RATE * SPS);
+		XFREE(frequencies);
+		return 1;
+	}
+
+	if(input_cfg->centerfreq < 0) {
+		if(compute_centerfreq(frequencies, channel_cnt, &input_cfg->centerfreq) == true) {
+			fprintf(stderr, "%s: computed center frequency: %.3f kHz\n", input_cfg->source, HZ_TO_KHZ(input_cfg->centerfreq));
+		} else {
+			fprintf(stderr, "%s: failed to compute center frequency\n", input_cfg->source);
+			XFREE(frequencies);
+			return 2;
+		}
+	}
+	if(check_frequency_span(frequencies, channel_cnt, input_cfg->centerfreq, input_cfg->sample_rate) == false) {
+		XFREE(frequencies);
+		return 1;
+	}
+	if(Config.output_queue_hwm < 0) {
+		fprintf(stderr, "Invalid --output-queue-hwm value: must be a non-negative integer\n");
+		XFREE(frequencies);
+		return 1;
+	}
+
 	if((AC_cache = ac_cache_create()) == NULL) {
 		fprintf(stderr, "Unable to initialize aircraft address cache\n");
+		XFREE(frequencies);
 		return 1;
 	}
 	fprintf(stderr, "Aircraft cache TTL set to %d seconds\n", Config.ac_cache_ttl);
@@ -732,10 +767,12 @@ int32_t main(int32_t argc, char **argv) {
 	struct block *input = input_create(input_cfg);
 	if(input == NULL) {
 		fprintf(stderr, "Invalid input specified\n");
+		XFREE(frequencies);
 		return 1;
 	}
 	if(input_init(input) < 0) {
 		fprintf(stderr, "Unable to initialize input\n");
+		XFREE(frequencies);
 		return 1;
 	}
 
@@ -752,6 +789,7 @@ int32_t main(int32_t argc, char **argv) {
 
 	struct block *fft = fft_create(fft_decimation_rate, fftfilt_transition_bw);
 	if(fft == NULL) {
+		XFREE(frequencies);
 		return 1;
 	}
 
@@ -790,6 +828,7 @@ int32_t main(int32_t argc, char **argv) {
 		if(channel_blocks[i] == NULL) {
 			fprintf(stderr, "Failed to initialize channel %s\n",
 					argv[optind + i]);
+			XFREE(frequencies);
 			return 1;
 		}
 	}
@@ -859,6 +898,7 @@ int32_t main(int32_t argc, char **argv) {
 	}
 	input_destroy(input);
 	input_cfg_destroy(input_cfg);
+	XFREE(frequencies);
 
 	fft_destroy(fft);
 	csdr_fft_destroy();
