@@ -63,6 +63,10 @@ static void sighandler(int32_t sig) {
 }
 
 static void setup_signals() {
+#ifdef _WIN32
+	signal(SIGINT, sighandler);
+	signal(SIGTERM, sighandler);
+#else
 	struct sigaction sigact = {0}, pipeact = {0};
 
 	pipeact.sa_handler = SIG_IGN;
@@ -72,6 +76,7 @@ static void setup_signals() {
 	sigaction(SIGINT, &sigact, NULL);
 	sigaction(SIGQUIT, &sigact, NULL);
 	sigaction(SIGTERM, &sigact, NULL);
+#endif
 }
 
 static void print_version() {
