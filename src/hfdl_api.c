@@ -282,7 +282,8 @@ HFDL_API int32_t HFDL_STDCALL HFDL_DecodeFile(
 	for(int32_t i = 0; i < channel_cnt; i++) {
 		channel_blocks[i] = hfdl_channel_create(input_cfg->sample_rate,
 				fft_decimation_rate, fftfilt_transition_bw,
-				input_cfg->centerfreq, frequencies[i]);
+				input_cfg->centerfreq, frequencies[i],
+				input_cfg->file_start_time_us);
 		if(channel_blocks[i] == NULL) {
 			fprintf(stderr, "HFDL_DecodeFile: failed to initialize channel %d\n", i);
 			ret = API_ERR_INIT;

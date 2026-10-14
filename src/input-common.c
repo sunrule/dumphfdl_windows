@@ -33,6 +33,7 @@ struct input_cfg *input_cfg_create() {
 	cfg->centerfreq= -1;
 	cfg->sample_rate = -1;
 	cfg->read_buffer_size = -1;
+	cfg->file_start_time_us = 0;
 	cfg->sfmt = SFMT_UNDEF;
 	cfg->gain = AUTO_GAIN;
 	cfg->bearing = 0.0;

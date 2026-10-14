@@ -416,6 +416,12 @@ int32_t mcr_input_preload_config(struct input_cfg *cfg) {
 		if(cfg->centerfreq < 0) {
 			cfg->centerfreq = h.frequency;
 		}
+		// Fill the file start time from the header unless the user has
+		// explicitly overridden it with --file-start-time.
+		// beg_time is stored in microseconds since epoch (UTC).
+		if(cfg->file_start_time_us == 0 && h.beg_time > 0) {
+			cfg->file_start_time_us = h.beg_time;
+		}
 	}
 	fclose(fh);
 	return ret;

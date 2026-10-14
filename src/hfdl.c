@@ -238,6 +238,8 @@ struct hfdl_channel {
 	uint32_t symsync_out_idx;
 	// PDU metadata
 	struct timeval pdu_timestamp;
+	struct timeval mpdu_time;              // real MPDU start time (file mode)
+	int64_t file_start_time_us;            // 0 = wall-clock mode
 	float freq_err_hz;
 	float signal_level;
 	float noise_floor;
@@ -466,13 +468,17 @@ void hfdl_init_globals(void) {
 }
 
 struct block *hfdl_channel_create(int32_t sample_rate, int32_t pre_decimation_rate,
-		float transition_bw, int32_t centerfreq, int32_t frequency) {
+		float transition_bw, int32_t centerfreq, int32_t frequency,
+		int64_t file_start_time_us) {
 	NEW(struct hfdl_channel, c);
 	c->resamp_rate = (float)(HFDL_SYMBOL_RATE * SPS) / ((float)sample_rate / (float)pre_decimation_rate);
 	c->resampler = msresamp_crcf_create(c->resamp_rate, 60.0f);
 	c->resampler_delay = (int32_t)ceilf(msresamp_crcf_get_delay(c->resampler));
 
 	c->chan_freq = frequency;
+	c->file_start_time_us = file_start_time_us;
+	c->mpdu_time.tv_sec = 0;
+	c->mpdu_time.tv_usec = 0;
 	float freq_shift = (float)(centerfreq - (frequency + HFDL_SSB_CARRIER_OFFSET_HZ)) / (float)sample_rate;
 	debug_print(D_DSP, "create: centerfreq=%d frequency=%d freq_shift=%f\n",
 			centerfreq, frequency, freq_shift);
@@ -805,10 +811,48 @@ static void *hfdl_decoder_thread(void *ctx) {
 						// Save the current timestamp and go back by the length
 						// of the prekey and two A sequences, so that the timestamp
 						// points at the start of the frame.
-						gettimeofday(&c->pdu_timestamp, NULL);
-						timersub(&c->pdu_timestamp, &ts_correction, &c->pdu_timestamp);
-						chan_debug("A2 sequence found at sample %" PRIu64 " (corr=%f retry=%d costas_dphi=%f)\n",
-								c->sample_cnt, corr_A2, c->search_retries, c->loop->dphi);
+						if(c->file_start_time_us != 0) {
+							// File mode: compute the real time of the MPDU start
+							// from the channel's own sample counter. This is
+							// independent of the read buffer size and pipeline
+							// latency, because c->sample_cnt counts the samples
+							// actually consumed by this channel since the start
+							// of the file (the FFT block consumes the stream
+							// without dropping samples).
+							//
+							// Time of the current channel position, measured
+							// from the start of the file, in microseconds:
+							uint64_t chan_time_us = (uint64_t)(
+									(double)c->sample_cnt * 1000000.0 /
+									(double)(HFDL_SYMBOL_RATE * SPS));
+							// Duration of the preamble (prekey + 2 A sequences)
+							// in microseconds:
+							uint64_t preamble_us = (PREKEY_LEN + 2 * A_LEN) *
+									1000000UL / HFDL_SYMBOL_RATE;
+							// The A2 sequence is detected at its end, i.e. at
+							// the position of the MPDU start + preamble.
+							uint64_t mpdu_time_us;
+							if(chan_time_us > preamble_us) {
+								mpdu_time_us = c->file_start_time_us +
+										chan_time_us - preamble_us;
+							} else {
+								// Frame starts before the beginning of the file
+								// (truncated recording): clamp to file start.
+								mpdu_time_us = c->file_start_time_us;
+							}
+							c->mpdu_time.tv_sec = (time_t)(mpdu_time_us / 1000000);
+							c->mpdu_time.tv_usec = (long)(mpdu_time_us % 1000000);
+							c->pdu_timestamp = c->mpdu_time;
+						} else {
+							// SDR mode: use the wall-clock time of detection,
+							// corrected by the preamble duration.
+							gettimeofday(&c->pdu_timestamp, NULL);
+							timersub(&c->pdu_timestamp, &ts_correction, &c->pdu_timestamp);
+							c->mpdu_time = c->pdu_timestamp;
+						}
+						chan_debug("A2 sequence found at sample %" PRIu64 " (corr=%f retry=%d costas_dphi=%f) timestamp: %ld.%06ld\n",
+								c->sample_cnt, corr_A2, c->search_retries, c->loop->dphi,
+								c->pdu_timestamp.tv_sec, c->pdu_timestamp.tv_usec);
 						c->freq_err_hz = c->loop->dphi * HFDL_SYMBOL_RATE / (2.0 * M_PI);
 						STATS_UPDATE(S.A2_found++);
 						STATS_UPDATE(S.A2_corr_total += fabsf(corr_A2));
@@ -1063,6 +1107,10 @@ static void dispatch_pdu(struct hfdl_channel *c, uint8_t *buf, size_t len) {
 	hm->freq_err_hz = c->freq_err_hz;
 	hm->rssi = LEVEL_TO_DB(c->signal_level);
 	hm->noise_floor = LEVEL_TO_DB(c->noise_floor);
+	// Real MPDU start time (equals rx_timestamp in file mode; in SDR mode
+	// it is the wall-clock time of detection, same as before).
+	hm->mpdu_time = c->mpdu_time;
+	hm->file_start_time_us = c->file_start_time_us;
 	m->rx_timestamp.tv_sec = c->pdu_timestamp.tv_sec;
 	m->rx_timestamp.tv_usec = c->pdu_timestamp.tv_usec;
 

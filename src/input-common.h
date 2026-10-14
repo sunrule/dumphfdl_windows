@@ -38,6 +38,12 @@ struct input_cfg {
 	int32_t centerfreq;
 	int32_t freq_offset;
 	int32_t read_buffer_size;
+	// Start time of the input file in microseconds since epoch (UTC).
+	// Used to compute real MPDU timestamps when decoding from files.
+	// 0 means "not set" (fall back to wall-clock time).
+	// For MCR input this is filled from the file header (beg_time) unless
+	// explicitly overridden with --file-start-time.
+	int64_t file_start_time_us;
 	input_type type;
 	sample_format sfmt;
 };

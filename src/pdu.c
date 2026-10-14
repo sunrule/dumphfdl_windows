@@ -81,6 +81,9 @@ bool hfdl_pdu_fcs_check(uint8_t *buf, uint32_t hdr_len) {
 struct metadata *hfdl_pdu_metadata_create() {
 	NEW(struct hfdl_pdu_metadata, m);
 	m->metadata.vtable = &hfdl_pdu_metadata_vtable;
+	m->mpdu_time.tv_sec = 0;
+	m->mpdu_time.tv_usec = 0;
+	m->file_start_time_us = 0;
 	return &m->metadata;
 }
 

@@ -290,6 +290,7 @@ static void usage() {
 	describe_option("CS16", "16-bit signed, little-endian (eg. recorded with sdrplay)", 2);
 	describe_option("CF32", "32-bit float, little-endian (eg. Airspy HF+)", 2);
 	describe_option("--read-buffer-size <integer>", "Number of bytes to read from file in one batch", 1);
+	describe_option("--file-start-time USEC", "Start time of I/Q file in microseconds since epoch (UTC). For MCR input this overrides the time from the file header", 1);
 
 	fprintf(stderr, "\nmcr_file_options:\n");
 	describe_option("--mcr-file <string>", "Read multichannel MCR recording from file", 1);
@@ -369,6 +370,7 @@ int32_t main(int32_t argc, char **argv) {
 #define OPT_DEVICE_SETTINGS 27
 #define OPT_FREQ_OFFSET 28
 #define OPT_READ_BUFFER_SIZE 29
+#define OPT_FILE_START_TIME 84
 #define OPT_FFT_THREAD_CNT 30
 
 #define OPT_OUTPUT 40
@@ -427,6 +429,7 @@ int32_t main(int32_t argc, char **argv) {
 		{ "device-settings",    required_argument,  NULL,   OPT_DEVICE_SETTINGS },
 		{ "freq-offset",        required_argument,  NULL,   OPT_FREQ_OFFSET },
 		{ "read-buffer-size",   required_argument,  NULL,   OPT_READ_BUFFER_SIZE },
+		{ "file-start-time",    required_argument,  NULL,   OPT_FILE_START_TIME },
 		{ "fft-threads",        required_argument,  NULL,   OPT_FFT_THREAD_CNT },
 		{ "output",             required_argument,  NULL,   OPT_OUTPUT },
 		{ "output-queue-hwm",   required_argument,  NULL,   OPT_OUTPUT_QUEUE_HWM },
@@ -557,6 +560,20 @@ int32_t main(int32_t argc, char **argv) {
 					return 1;
 				}
 				break;
+			case OPT_FILE_START_TIME: {
+				// Parse as unsigned 64-bit decimal. Values up to 2^63 are
+				// accepted (enough for microsecond epoch timestamps).
+				char *endptr = NULL;
+				errno = 0;
+				unsigned long long val = strtoull(optarg, &endptr, 10);
+				if(endptr == optarg || endptr[0] != '\0' || errno == ERANGE) {
+					fprintf(stderr, "Parameter error: '%s': not a valid decimal integer number\n", optarg);
+					return 1;
+				}
+				input_cfg->file_start_time_us = (int64_t)val;
+				fprintf(stderr, "File start time set to: %llu microseconds since epoch\n", val);
+				break;
+			}
 			case OPT_FFT_THREAD_CNT:
 				if(parse_int32(optarg, &fft_thread_cnt) == false) {
 					return 1;
@@ -838,7 +855,8 @@ int32_t main(int32_t argc, char **argv) {
 	struct block *channel_blocks[channel_cnt];
 	for(int32_t i = 0; i < channel_cnt; i++) {
 		channel_blocks[i] = hfdl_channel_create(input_cfg->sample_rate, fft_decimation_rate,
-				fftfilt_transition_bw, input_cfg->centerfreq, frequencies[i]);
+				fftfilt_transition_bw, input_cfg->centerfreq, frequencies[i],
+				input_cfg->file_start_time_us);
 		if(channel_blocks[i] == NULL) {
 			fprintf(stderr, "Failed to initialize channel %s\n",
 					argv[optind + i]);

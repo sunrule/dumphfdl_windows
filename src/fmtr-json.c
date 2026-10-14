@@ -27,6 +27,12 @@ static void hfdl_format_json(la_vstring *vstr, void const *data) {
 	la_json_object_start(vstr, "t");
 	la_json_append_int64(vstr, "sec", m->metadata.rx_timestamp.tv_sec);
 	la_json_append_int64(vstr, "usec", m->metadata.rx_timestamp.tv_usec);
+	// In file mode rx_timestamp already carries the real MPDU start time.
+	// Emit it explicitly for consumers that want the unmodified value.
+	if(m->file_start_time_us != 0) {
+		la_json_append_int64(vstr, "mpdu_sec", m->mpdu_time.tv_sec);
+		la_json_append_int64(vstr, "mpdu_usec", m->mpdu_time.tv_usec);
+	}
 	la_json_object_end(vstr);
 
 	la_json_append_int64(vstr, "freq", m->freq);

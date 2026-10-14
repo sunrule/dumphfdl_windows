@@ -2,6 +2,7 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#include <sys/time.h>              // struct timeval
 #include "metadata.h"               // struct metadata
 #include "util.h"                   // struct octet string
 
@@ -14,6 +15,13 @@ struct hfdl_pdu_metadata {
 	float rssi;
 	float noise_floor;
 	char slot;                      // 'S' - single slot frame, 'D' - double slot frame
+	// Real time of the MPDU start. In file mode (file_start_time_us != 0)
+	// this is computed from the sample position within the recording;
+	// in SDR mode it equals the wall-clock detection time.
+	struct timeval mpdu_time;
+	// Start time of the input recording in microseconds since epoch (UTC).
+	// 0 when decoding from a live SDR stream.
+	uint64_t file_start_time_us;
 };
 
 enum hfdl_pdu_direction {
