@@ -1,10 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include <time.h>                           // time_t
+#include <stdio.h>                           // fprintf
 #include <libacars/hash.h>                  // la_hash_*
 #include "globals.h"                        // Config
 #include "util.h"                           // NEW, debug_print
 #include "cache.h"                          // cache_*
 #include "ac_cache.h"                       // ac_cache
+#include "ac_cache_db.h"                    // ac_cache_db_*
 
 // This object is used to cache mappings between aircraft ID numbers (extracted
 // from PDU headers) and their ICAO hex addresses. fwd_cache is used for
@@ -18,6 +20,9 @@
 struct ac_cache {
 	struct cache *fwd_cache;
 	struct cache *inv_cache;
+
+	ac_cache_db *db;                // persistent backend, or NULL
+	int32_t ttl;                    // cache TTL in seconds (for DB expiry)
 };
 
 // Hash key definitions.
@@ -57,10 +62,22 @@ static bool ac_cache_entry_perform_delete(ac_cache const *cache, int32_t freq,
  * Public methods
  ******************************/
 
-ac_cache *ac_cache_create(void) {
+ac_cache *ac_cache_create(char const *db_path) {
 	NEW(ac_cache, cache);
 	cache->fwd_cache = cache_create("ac_fwd", &ac_cache_fwd_vtable, Config.ac_cache_ttl, AC_CACHE_EXPIRATION_INTERVAL);
 	cache->inv_cache = cache_create("ac_inv", &ac_cache_inv_vtable, Config.ac_cache_ttl, AC_CACHE_EXPIRATION_INTERVAL);
+	cache->ttl = Config.ac_cache_ttl;
+	cache->db = NULL;
+
+	// Open the persistent backend (optional). On failure we fall back to
+	// the in-memory cache only - the decode still works, just without
+	// persistence across runs.
+	if(db_path != NULL) {
+		cache->db = ac_cache_db_open(db_path);
+		if(cache->db != NULL) {
+			fprintf(stderr, "Aircraft cache database: %s\n", db_path);
+		}
+	}
 	return cache;
 }
 
@@ -102,6 +119,15 @@ void ac_cache_entry_create(ac_cache *cache, int32_t freq,
 		debug_print(D_CACHE, "%06X: warning: inverse entry overwritten\n", icao_address);
 	}
 
+	// Persist to the database (if enabled)
+	if(cache->db != NULL) {
+		// The aircraft can only be logged on on a single frequency at a
+		// time, so any old mapping for this ICAO address is stale and
+		// must be removed from the DB as well.
+		ac_cache_db_delete_by_icao(cache->db, icao_address);
+		ac_cache_db_insert(cache->db, freq, id, icao_address, now);
+	}
+
 	debug_print(D_CACHE, "new entry: %hhu@%d: %06X\n",
 			id, freq, icao_address);
 }
@@ -127,6 +153,21 @@ struct ac_cache_entry *ac_cache_entry_lookup(ac_cache *cache, int32_t freq, uint
 		debug_print(D_CACHE, "%hhu@%d: %06X\n", id, freq, e->icao_address);
 	} else {
 		debug_print(D_CACHE, "%hhu@%d: not found\n", id, freq);
+		// Not in memory: try the persistent database (if enabled).
+		// On a hit, promote the entry into the in-memory cache, so that
+		// subsequent lookups are fast.
+		if(cache->db != NULL) {
+			uint32_t icao_address = 0;
+			time_t created_time = 0;
+			if(ac_cache_db_lookup(cache->db, freq, id, cache->ttl,
+					&icao_address, &created_time)) {
+				debug_print(D_CACHE, "%hhu@%d: %06X (from DB)\n",
+						id, freq, icao_address);
+				ac_cache_fwd_entry_create(cache, freq, id, icao_address, created_time);
+				ac_cache_inv_entry_create(cache, freq, id, icao_address, created_time);
+				e = cache_entry_lookup(cache->fwd_cache, &fwd_key);
+			}
+		}
 	}
 	return e;
 }
@@ -135,6 +176,12 @@ void ac_cache_destroy(ac_cache *cache) {
 	if(cache != NULL) {
 		cache_destroy(cache->fwd_cache);
 		cache_destroy(cache->inv_cache);
+		if(cache->db != NULL) {
+			// Remove expired entries before closing, so that the database
+			// does not grow without bound across runs.
+			ac_cache_db_expire(cache->db, cache->ttl);
+			ac_cache_db_close(cache->db);
+		}
 		XFREE(cache);
 	}
 }
@@ -238,6 +285,10 @@ static bool ac_cache_entry_perform_delete(ac_cache const *cache, int32_t freq,
 			struct ac_cache_fwd_key fwd_key = { .freq = e->freq, .id = e->id };
 			result  = cache_entry_delete(cache->inv_cache, &inv_key);
 			result &= cache_entry_delete(cache->fwd_cache, &fwd_key);
+			// Propagate the deletion to the persistent database
+			if(cache->db != NULL) {
+				ac_cache_db_delete(cache->db, fwd_key.freq, fwd_key.id);
+			}
 			if(result) {
 				debug_print(D_CACHE, "entry deleted: %06X@%d: %hhu\n", icao_address, fwd_key.freq, fwd_key.id);
 			} else {

@@ -14,7 +14,10 @@ struct ac_cache_entry {
 	uint32_t icao_address;
 };
 
-ac_cache *ac_cache_create(void);
+// db_path: optional path to a SQLite database file for persistent
+// storage of the mappings across program runs. NULL = in-memory
+// cache only (no persistence).
+ac_cache *ac_cache_create(char const *db_path);
 void ac_cache_entry_create(ac_cache *cache, int32_t freq,
 		uint8_t id, uint32_t icao_address);
 bool ac_cache_entry_delete(ac_cache *cache, int32_t freq,

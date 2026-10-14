@@ -315,6 +315,7 @@ static void usage() {
 	describe_option("--station-id <string>", "Receiver site identifier", 1);
 	fprintf(stderr, "%*sMaximum length: %u characters\n", USAGE_OPT_NAME_COLWIDTH, "", STATION_ID_LEN_MAX);
 	describe_option("--aircraft-cache-ttl <integer>", "How long to keep aircraft ID to ICAO mappings in the cache", 1);
+	describe_option("--ac-cache-db <string>", "Store aircraft ID to ICAO mappings in a SQLite database file (persists across runs)", 1);
 	fprintf(stderr, "%*sDefault: %ld seconds\n", USAGE_OPT_NAME_COLWIDTH, "", AC_CACHE_TTL_DEFAULT);
 
 	fprintf(stderr, "\nText output formatting options:\n");
@@ -330,6 +331,7 @@ static void usage() {
 	fprintf(stderr, "\nSystem table options:\n");
 	describe_option("--system-table <string>", "Load system table from the given file", 1);
 	describe_option("--system-table-save <string>", "Save updated system table to the given file", 1);
+	describe_option("--systable-db <string>", "Store partially received system table PDUs in a SQLite database (assembles across runs)", 1);
 
 #ifdef WITH_STATSD
 	fprintf(stderr, "\nEtsy StatsD options:\n");
@@ -381,9 +383,11 @@ int32_t main(int32_t argc, char **argv) {
 #define OPT_FREQ_AS_SQUAWK 51
 #define OPT_PRETTIFY_JSON 52
 #define OPT_AC_CACHE_TTL 53
+#define OPT_AC_CACHE_DB 82
 
 #define OPT_SYSTABLE_FILE 60
 #define OPT_SYSTABLE_SAVE_FILE 61
+#define OPT_SYSTABLE_DB 83
 
 #ifdef WITH_STATSD
 #define OPT_STATSD 70
@@ -436,12 +440,14 @@ int32_t main(int32_t argc, char **argv) {
 		{ "output-corrupted-pdus", no_argument,     NULL,   OPT_OUTPUT_CORRUPTED_PDUS },
 		{ "freq-as-squawk",     no_argument,        NULL,   OPT_FREQ_AS_SQUAWK },
 		{ "aircraft-cache-ttl", required_argument,  NULL,   OPT_AC_CACHE_TTL },
+		{ "ac-cache-db",         required_argument,  NULL,   OPT_AC_CACHE_DB },
 #ifdef WITH_SQLITE
 		{ "bs-db",              required_argument,  NULL,   OPT_BS_DB },
 		{ "ac-details",         required_argument,  NULL,   OPT_AC_DETAILS },
 #endif
 		{ "system-table",       required_argument,  NULL,   OPT_SYSTABLE_FILE },
 		{ "system-table-save",  required_argument,  NULL,   OPT_SYSTABLE_SAVE_FILE },
+		{ "systable-db",         required_argument,  NULL,   OPT_SYSTABLE_DB },
 #ifdef WITH_STATSD
 		{ "statsd",             required_argument,  NULL,   OPT_STATSD },
 		{ "noise-floor-stats-interval", required_argument,  NULL,   OPT_NF_STATS_INTERVAL },
@@ -460,6 +466,8 @@ int32_t main(int32_t argc, char **argv) {
 	la_list *outputs = NULL;
 	char const *systable_file = NULL;
 	char const *systable_save_file = NULL;
+	char const *ac_cache_db_file = NULL;
+	char const *systable_db_file = NULL;
 	int32_t fft_thread_cnt = FFT_THREAD_CNT_DEFAULT;
 #ifdef WITH_STATSD
 	char *statsd_addr = NULL;
@@ -605,8 +613,14 @@ int32_t main(int32_t argc, char **argv) {
 					return 1;
 				}
 				break;
+			case OPT_AC_CACHE_DB:
+				ac_cache_db_file = optarg;
+				break;
 			case OPT_SYSTABLE_FILE:
 				systable_file = optarg;
+				break;
+			case OPT_SYSTABLE_DB:
+				systable_db_file = optarg;
 				break;
 			case OPT_SYSTABLE_SAVE_FILE:
 				systable_save_file = optarg;
@@ -675,7 +689,7 @@ int32_t main(int32_t argc, char **argv) {
 	// Create the system table before parsing the channel frequencies, so
 	// that the frequencies can be auto-selected from it when the user did
 	// not give any on the command line (MCR inputs).
-	Systable = systable_create(systable_save_file);
+	Systable = systable_create(systable_save_file, systable_db_file);
 	if(systable_file != NULL) {
 		Systable_lock();
 		if(systable_read_from_file(Systable, systable_file) == false) {
@@ -751,7 +765,7 @@ int32_t main(int32_t argc, char **argv) {
 		return 1;
 	}
 
-	if((AC_cache = ac_cache_create()) == NULL) {
+	if((AC_cache = ac_cache_create(ac_cache_db_file)) == NULL) {
 		fprintf(stderr, "Unable to initialize aircraft address cache\n");
 		XFREE(frequencies);
 		return 1;

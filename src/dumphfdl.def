@@ -1,0 +1,4 @@
+LIBRARY dumphfdl
+EXPORTS
+    HFDL_DecodeFile
+    HFDL_Version

@@ -255,6 +255,7 @@ add_subdirectory (libfec)
 
 add_library (dumphfdl_base OBJECT
 	ac_cache.c
+	ac_cache_db.c
 	ac_data.c
 	acars.c
 	async_queue.c
@@ -281,6 +282,7 @@ add_library (dumphfdl_base OBJECT
 	metadata.c
 	mpdu.c
 	options.c
+	output-callback.c
 	output-common.c
 	output-file.c
 	output-tcp.c
@@ -289,6 +291,7 @@ add_library (dumphfdl_base OBJECT
 	position.c
 	spdu.c
 	systable.c
+	systable_db.c
 	util.c
 	win32_compat.c
 	${CMAKE_CURRENT_BINARY_DIR}/version.c
@@ -296,8 +299,14 @@ add_library (dumphfdl_base OBJECT
 )
 
 target_include_directories (dumphfdl_base PUBLIC
+	${CMAKE_CURRENT_SOURCE_DIR}
 	${dumphfdl_include_dirs}
 )
+
+# libconfig headers default to dllimport on Windows; LIBCONFIG_STATIC
+# selects the plain (static link) declarations. Required because we link
+# against the static libconfig.a.
+target_compile_definitions(dumphfdl_base PUBLIC LIBCONFIG_STATIC)
 
 # can't do this per target with cmake <3.13
 link_directories(${link_dirs})
@@ -313,6 +322,8 @@ target_link_libraries (dumphfdl
 	m
 	pthread
 	${dumphfdl_extra_libs}
+	z                # libacars (MIAM decompression) needs zlib;
+	                # must come after libacars for the static link order
 )
 
 if(WIN32)
@@ -322,3 +333,61 @@ endif()
 install(TARGETS dumphfdl
 	RUNTIME DESTINATION bin
 )
+
+# ---------------------------------------------------------------------------
+# DLL target: shared library with an exported C API (see hfdl_api.h).
+#
+# The DLL reuses the same object files as the executable. hfdl_api.c
+# provides the exported API layer; dll_entry.c provides the DllMain
+# entry point (main.c is not linked into the DLL - the executable and
+# the DLL each provide their own entry point).
+#
+# Build with -DBUILD_DLL=ON to enable this target.
+# ---------------------------------------------------------------------------
+option(BUILD_DLL "Build the dumphfdl DLL with exported C API" OFF)
+
+if(BUILD_DLL)
+	# Note: main.c is linked in as well - its main() function is simply
+	# never referenced inside a DLL (the entry point is DllMain in
+	# dll_entry.c), so it is harmless dead code there.
+	add_library(dumphfdl_dll SHARED
+		hfdl_api.c
+		dll_entry.c
+		$<TARGET_OBJECTS:dumphfdl_base>
+		$<TARGET_OBJECTS:fec>
+	)
+	target_compile_definitions(dumphfdl_dll PRIVATE HFDL_API_EXPORTS)
+	target_include_directories(dumphfdl_dll PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}
+		${dumphfdl_include_dirs}
+	)
+	target_link_libraries(dumphfdl_dll
+		m
+		pthread
+		${dumphfdl_extra_libs}
+		z                # libacars (MIAM decompression) needs zlib;
+		                # must come after libacars for the static link order
+	)
+	if(WIN32)
+		target_link_libraries(dumphfdl_dll ws2_32)
+		# Use the .def file so the exports have clean (undecorated)
+		# names, importable by Delphi without the @N suffix.
+		# --kill-at strips the stdcall decoration for any symbols not
+		# listed in the .def file.
+		set_target_properties(dumphfdl_dll PROPERTIES
+			LINK_FLAGS "-Wl,--kill-at"
+			OUTPUT_NAME "dumphfdl"
+			PREFIX ""
+			LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/dumphfdl.def"
+		)
+		target_sources(dumphfdl_dll PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/dumphfdl.def")
+		set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/dumphfdl.def" PROPERTIES
+			HEADER_FILE_ONLY TRUE
+		)
+	endif()
+	install(TARGETS dumphfdl_dll
+		RUNTIME DESTINATION bin
+		LIBRARY DESTINATION lib
+		ARCHIVE DESTINATION lib
+	)
+endif()

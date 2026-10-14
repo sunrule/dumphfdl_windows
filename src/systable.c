@@ -9,6 +9,7 @@
 #include <libacars/list.h>          // la_list
 #include <libacars/json.h>          // la_json_append_*
 #include "systable.h"
+#include "systable_db.h"                  // systable_db_*
 #include "util.h"                   // NEW, XFREE, struct location, parse_coordinate
 
 enum systable_err_code {
@@ -136,6 +137,7 @@ struct _systable {
 // Main system table object
 struct systable {
 	struct _systable *current, *new;
+	systable_db *db;                                        // persistent PDU storage, or NULL
 	struct systable_err err;                                // diagnostics for the last operation
 };
 
@@ -159,10 +161,17 @@ static void pdu_set_destroy(struct systable_pdu_set *ps);
  * Public methods
  ******************************/
 
-systable *systable_create(char const *savefile) {
+systable *systable_create(char const *savefile, char const *db_path) {
 	NEW(systable, st);
 	st->current = _systable_create(savefile);
 	st->new = _systable_create(savefile);
+	st->db = NULL;
+	if(db_path != NULL) {
+		st->db = systable_db_open(db_path);
+		if(st->db != NULL) {
+			fprintf(stderr, "System table PDU database: %s\n", db_path);
+		}
+	}
 	return st;
 }
 
@@ -331,7 +340,26 @@ void systable_destroy(systable *st) {
 	if(st != NULL) {
 		_systable_destroy(st->current);
 		_systable_destroy(st->new);
+		if(st->db != NULL) {
+			systable_db_close(st->db);
+		}
 		XFREE(st);
+	}
+}
+
+// Callback used by systable_db_load_set() to feed restored PDUs back
+// into the in-memory PDU set. userdata is the struct systable_pdu_set.
+static void systable_db_restore_callback(int16_t version, uint8_t idx,
+		uint8_t pdu_set_len, uint8_t *buf, uint32_t len, void *userdata) {
+	UNUSED(version);
+	struct systable_pdu_set *ps = userdata;
+	if(ps == NULL || idx >= ps->len) {
+		return;
+	}
+	if(ps->pdus[idx] == NULL) {
+		ps->pdus[idx] = octet_string_copy(&(struct octet_string){ .buf = buf, .len = len });
+		debug_print(D_MISC, "restored PDU %hhu of set (len %hhu) from DB\n",
+				idx, pdu_set_len);
 	}
 }
 
@@ -353,6 +381,18 @@ void systable_store_pdu(systable const *st, int16_t version, uint8_t idx,
 	if(ps == NULL) {
 		ps = st->new->pdu_set = pdu_set_create(pdu_set_len);
 		ps->version = version;
+		// First PDU of a new set: try to restore any PDUs stored
+		// previously for this set (same version and PDU count) from the
+		// database, so that a system table split across multiple
+		// recordings can still be assembled.
+		if(st->db != NULL) {
+			int32_t restored = systable_db_load_set(st->db, version, pdu_set_len,
+					systable_db_restore_callback, ps);
+			if(restored > 0) {
+				fprintf(stderr, "System table version %d: restored %d previously "
+						"stored PDU(s) from the database\n", version, restored);
+			}
+		}
 	}
 	// If there is a PDU stored already at idx and its contents is different
 	// than the new one, then replace it.
@@ -367,6 +407,28 @@ void systable_store_pdu(systable const *st, int16_t version, uint8_t idx,
 	}
 	if(ps->pdus[idx] == NULL) {
 		ps->pdus[idx] = octet_string_copy(&(struct octet_string){ .buf = buf, .len = buf_len });
+	}
+
+	// Persist the PDU to the database (if enabled), so that a PDU set
+	// split across multiple recordings can still be assembled.
+	if(st->db != NULL) {
+		systable_db_store_pdu(st->db, version, pdu_set_len, idx, buf, buf_len);
+	}
+
+	// Notify the user about the progress of the (possibly partial)
+	// system table reception.
+	{
+		uint8_t received = 0;
+		for(uint8_t i = 0; i < pdu_set_len; i++) {
+			if(ps->pdus[i] != NULL) {
+				received++;
+			}
+		}
+		if(received < pdu_set_len) {
+			fprintf(stderr, "System table version %d: received PDU %hhu of %hhu "
+					"(%hhu of %hhu parts collected)\n",
+					version, idx + 1, pdu_set_len, received, pdu_set_len);
+		}
 	}
 }
 
@@ -408,6 +470,13 @@ la_proto_node *systable_process_pdu_set(systable *st) {
 	struct systable_complete *result = systable_decode(buf, total_len);
 	ASSERT(result != NULL);
 	result->version = ps->version;
+
+	// The PDU set has been fully consumed - remove it from the database
+	// (if persistence is enabled), so that it is not restored again on
+	// the next run.
+	if(st->db != NULL) {
+		systable_db_clear_set(st->db, ps->version, ps->len);
+	}
 
 	pdu_set_destroy(st->new->pdu_set);
 	st->new->pdu_set = NULL;

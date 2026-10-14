@@ -124,6 +124,38 @@ sudo ldconfig       # on Linux only
 
 Refer to libacars's README.md for complete instructions and available compilation options.
 
+### Building on Windows (MSYS2 / MinGW)
+
+To build all four Windows variants (64-bit exe, 64-bit DLL, 32-bit exe, 32-bit DLL)
+in one command, use the provided script:
+
+```sh
+# 1. Install MSYS2 (https://www.msys2.org/) and required packages:
+pacman -S git mingw-w64-i686-gcc mingw-w64-x86_64-gcc \
+           mingw-w64-i686-cmake mingw-w64-x86_64-cmake \
+           mingw-w64-i686-ninja mingw-w64-x86_64-ninja \
+           mingw-w64-i686-pkg-config mingw-w64-x86_64-pkg-config \
+           mingw-w64-i686-sqlite3 mingw-w64-x86_64-sqlite3 \
+           curl python
+
+# 2. Run the build script from MSYS2 MinGW x64 shell:
+./scripts/build-all.sh
+```
+
+The script will:
+
+1. Install remaining x64 dependencies from pacman (fftw, libconfig, sqlite3, zlib)
+2. Build liquid-dsp and libacars from source for both x64 and i686
+   (these packages are not available in MSYS2 pacman for i686)
+3. Build all four binaries into `build/dumphfdl-x64` and `build/dumphfdl-i686`
+4. Collect ready-to-use distributions into `dist/x64/` and `dist/x86/`
+   (each with the required runtime DLLs next to the binaries)
+
+Options: `--deps-only` (dependencies only), `--no-deps` (skip dependency builds).
+
+The 32-bit DLL (`dist/x86/dumphfdl.dll`) is intended for Borland Delphi 7;
+see `doc/dll-usage.md` and `delphi/` for usage examples.
+
 #### SoapySDR support (optional)
 
 While the SoapySDR library might be included in your Linux distribution, it is a good idea to use the latest available version.

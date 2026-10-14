@@ -13,7 +13,12 @@ enum systable_err_t {
 	SYSTABLE_ERR_VALIDATE
 };
 
-systable *systable_create(char const *savefile);
+// db_path: optional path to a SQLite database file for persistent
+// storage of partially received System Table PDU sets, or NULL.
+// When given, PDUs received in one decoding run are remembered,
+// so that a system table split across multiple recordings can be
+// assembled. Requires SQLite support.
+systable *systable_create(char const *savefile, char const *db_path);
 bool systable_read_from_file(systable *st, char const *file);
 void systable_destroy(systable *st);
 
