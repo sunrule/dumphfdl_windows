@@ -22,15 +22,22 @@ struct spectrogram_state {
 	int width;
 	int height;
 	int fft_size;
-	int frame_stride;
 	int frame_count;
 	int end_col;
 	char *path;
 	int format;
 
+	int32_t sample_rate;
+	int32_t display_bandwidth;
+	int resample_factor;
+
 	float complex *samples;
 	size_t sample_count;
 	size_t sample_cap;
+
+	float complex *resampled;
+	size_t resampled_count;
+	size_t resampled_cap;
 
 	float complex *fft_in;
 	float complex *fft_out;
@@ -110,11 +117,29 @@ int spectrogram_init(struct input_cfg const *cfg) {
 	sp.path = cfg->spectrogram_path ? strdup(cfg->spectrogram_path) : NULL;
 	sp.format = cfg->spectrogram_format;
 	sp.end_col = -1;
+	sp.sample_rate = cfg->sample_rate;
+	sp.display_bandwidth = cfg->spectrogram_display_bandwidth;
 
 	if(sp.path == NULL) {
 		fprintf(stderr, "Spectrogram: no output path given\n");
 		return -1;
 	}
+
+	// Calculate resampling factor to show full recording bandwidth
+	// For complex FFT: coverage is 0..sample_rate. We want 0..display_bandwidth.
+	// So target sample rate = display_bandwidth.
+	if(sp.display_bandwidth > 0 && sp.sample_rate > sp.display_bandwidth) {
+		int factor = 1;
+		while(sp.sample_rate / factor > sp.display_bandwidth && factor < 1024) {
+			factor *= 2;
+		}
+		sp.resample_factor = factor;
+	} else {
+		sp.resample_factor = 1;
+	}
+
+	fprintf(stderr, "Spectrogram: sample_rate=%d Hz, display_bw=%d Hz, resample_factor=%d\n",
+			sp.sample_rate, sp.display_bandwidth, sp.resample_factor);
 
 	sp.fft_in = XCALLOC(sp.fft_size, sizeof(float complex));
 	sp.fft_out = XCALLOC(sp.fft_size, sizeof(float complex));
@@ -137,6 +162,13 @@ int spectrogram_init(struct input_cfg const *cfg) {
 		return -1;
 	}
 
+	sp.resampled_cap = 2 * 1024 * 1024;
+	sp.resampled = XCALLOC(sp.resampled_cap, sizeof(float complex));
+	if(sp.resampled == NULL) {
+		fprintf(stderr, "Spectrogram: out of memory for resampled buffer\n");
+		return -1;
+	}
+
 	fprintf(stderr, "Spectrogram: enabled %dx%d FFT=%d path=%s\n",
 			sp.width, sp.height, sp.fft_size, sp.path);
 	return 0;
@@ -156,45 +188,108 @@ void spectrogram_accumulate(float complex const *samples, size_t count) {
 	sp.sample_count += count;
 }
 
+static void sp_resample_samples(void) {
+	if(sp.resample_factor <= 1 || sp.sample_count == 0) {
+		sp.resampled_count = sp.sample_count;
+		if(sp.resampled_count > sp.resampled_cap) {
+			sp.resampled_cap = sp.resampled_count;
+			sp.resampled = realloc(sp.resampled, sp.resampled_cap * sizeof(float complex));
+		}
+		memcpy(sp.resampled, sp.samples, sp.sample_count * sizeof(float complex));
+		return;
+	}
+
+	int factor = sp.resample_factor;
+	size_t new_count = sp.sample_count / (size_t)factor;
+	if(new_count == 0) new_count = 1;
+
+	if(new_count > sp.resampled_cap) {
+		sp.resampled_cap = new_count;
+		sp.resampled = realloc(sp.resampled, sp.resampled_cap * sizeof(float complex));
+	}
+
+	for(size_t i = 0; i < new_count; i++) {
+		size_t start = i * (size_t)factor;
+		float complex sum = 0.0f;
+		size_t count = 0;
+		for(int j = 0; j < factor && (start + j) < sp.sample_count; j++) {
+			sum += sp.samples[start + j];
+			count++;
+		}
+		sp.resampled[i] = sum / (float)count;
+	}
+	sp.resampled_count = new_count;
+}
+
 int spectrogram_write(void) {
 	if(!sp.enabled || sp.sample_count == 0) return 0;
 
-	// Match Delphi implementation:
-	// - 512-point FFT (default)
-	// - hop = 1221 samples (at 24000 Hz)
-	// - initial offset = 256 samples
-	// - rectangular window (no windowing)
-	// - only bins 0..height-1 from FFT output
-	// - at least 'width' frames
-
-	int hop = 1221;
-	int offset = 256;
+	// Resample to show full recording bandwidth, but only if we have
+	// enough samples for at least one FFT frame after resampling.
 	int fft_size = sp.fft_size;
-
 	if(fft_size > sp.height) {
 		fft_size = sp.height;
+	}
+	bool use_resampled = false;
+	if(sp.resample_factor > 1 && sp.sample_count / (size_t)sp.resample_factor >= (size_t)fft_size) {
+		sp_resample_samples();
+		use_resampled = true;
+	} else {
+		sp.resampled_count = sp.sample_count;
+		if(sp.resampled_count > sp.resampled_cap) {
+			sp.resampled_cap = sp.resampled_count;
+			sp.resampled = realloc(sp.resampled, sp.resampled_cap * sizeof(float complex));
+		}
+		memcpy(sp.resampled, sp.samples, sp.sample_count * sizeof(float complex));
+	}
+
+	int sample_rate = sp.sample_rate / sp.resample_factor;
+	if(!use_resampled) {
+		sample_rate = sp.sample_rate;
+	}
+
+	// Delphi hop/offset scaled by sample rate ratio
+	// Reference: 1221 samples at 31250 Hz
+	int hop = (int)roundf(1221.0f * (float)sample_rate / 31250.0f);
+	int offset = (int)roundf(256.0f * (float)sample_rate / 31250.0f);
+	if(hop < 1) hop = 1;
+	if(offset < 0) offset = 0;
+	if(offset + (int)fft_size > (int)sp.resampled_count) {
+		offset = (int)sp.resampled_count - fft_size;
+		if(offset < 0) offset = 0;
+	}
+
+	// For recordings > 5s, increase hop (time decimation by power of 2)
+	double duration_sec = (double)sp.resampled_count / (double)sample_rate;
+	if(duration_sec > 5.0) {
+		int min_hop = (int)ceilf((float)(sp.resampled_count - offset) / (float)(sp.width * 2));
+		int pow2_hop = 1;
+		while(pow2_hop < min_hop && pow2_hop < 65536) {
+			pow2_hop *= 2;
+		}
+		if(pow2_hop > hop) {
+			hop = pow2_hop;
+		}
 	}
 
 	// Number of available frames
 	int64_t available = 0;
-	if(sp.sample_count > (size_t)(offset + fft_size)) {
-		available = (sp.sample_count - offset) / hop;
+	if(sp.resampled_count > (size_t)(offset + fft_size)) {
+		available = (sp.resampled_count - offset) / hop;
 	}
 	int64_t total_frames = available;
 	if(total_frames < sp.width) {
 		total_frames = sp.width;
 	}
 
-	// Recreate FFT plan if size changed
-	// (in current implementation, fft_size is fixed at init)
 	sp.frame_count = 0;
 	sp.db_range_set = false;
 	for(int64_t i = 0; i < total_frames && sp.frame_count < sp.width; i++) {
 		size_t start = (size_t)(offset + i * hop);
-		if(start + (size_t)fft_size > sp.sample_count) {
+		if(start + (size_t)fft_size > sp.resampled_count) {
 			break;
 		}
-		memcpy(sp.fft_in, sp.samples + start, (size_t)fft_size * sizeof(float complex));
+		memcpy(sp.fft_in, sp.resampled + start, (size_t)fft_size * sizeof(float complex));
 		sp_compute_frame_range_pass();
 	}
 	if(!sp.db_range_set) {
@@ -212,18 +307,18 @@ int spectrogram_write(void) {
 	sp.frame_count = 0;
 	for(int64_t i = 0; i < total_frames && sp.frame_count < sp.width; i++) {
 		size_t start = (size_t)(offset + i * hop);
-		if(start + (size_t)fft_size > sp.sample_count) {
+		if(start + (size_t)fft_size > sp.resampled_count) {
 			break;
 		}
-		memcpy(sp.fft_in, sp.samples + start, (size_t)fft_size * sizeof(float complex));
+		memcpy(sp.fft_in, sp.resampled + start, (size_t)fft_size * sizeof(float complex));
 		sp_compute_frame();
 	}
 
 	sp.end_col = sp.frame_count;
 	sp_draw_end_line();
 
-	fprintf(stderr, "Spectrogram: wrote %d columns (hop=%d, dB range %.1f..%.1f) from %zu samples\n",
-			sp.frame_count, hop, sp.db_min, sp.db_max, sp.sample_count);
+	fprintf(stderr, "Spectrogram: wrote %d columns (hop=%d, dB range %.1f..%.1f) from %zu samples (%zu resampled)\n",
+			sp.frame_count, hop, sp.db_min, sp.db_max, sp.sample_count, sp.resampled_count);
 
 	int rc = 0;
 	switch(sp.format) {
@@ -249,6 +344,7 @@ int spectrogram_write(void) {
 void spectrogram_cleanup(void) {
 	if(!sp.enabled) return;
 	XFREE(sp.samples);
+	XFREE(sp.resampled);
 	XFREE(sp.image);
 	if(sp.fft_plan) csdr_destroy_fft_c2c(sp.fft_plan);
 	XFREE(sp.fft_in);

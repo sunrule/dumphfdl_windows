@@ -44,6 +44,7 @@ struct input_cfg *input_cfg_create() {
 	cfg->spectrogram_fft_size = 0;
 	cfg->spectrogram_path = NULL;
 	cfg->spectrogram_format = 0;
+	cfg->spectrogram_display_bandwidth = 0;
 	return cfg;
 }
 

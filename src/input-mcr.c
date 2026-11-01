@@ -363,6 +363,9 @@ int32_t mcr_input_init(struct input *input) {
 		cfg->centerfreq = h.frequency;
 		debug_print(D_MISC, "MCR: center frequency from header: %d\n", cfg->centerfreq);
 	}
+	if(cfg->spectrogram_display_bandwidth <= 0) {
+		cfg->spectrogram_display_bandwidth = h.band_width;
+	}
 
 	if(mcr_load_calibration(mcr->fh, &h, cfg->bearing, cfg->elevation, &mcr->calib) < 0) {
 		return -1;
@@ -417,6 +420,9 @@ int32_t mcr_input_preload_config(struct input_cfg *cfg) {
 		}
 		if(cfg->centerfreq < 0) {
 			cfg->centerfreq = h.frequency;
+		}
+		if(cfg->spectrogram_display_bandwidth <= 0) {
+			cfg->spectrogram_display_bandwidth = h.band_width;
 		}
 		// Fill the file start time from the header unless the user has
 		// explicitly overridden it with --file-start-time.

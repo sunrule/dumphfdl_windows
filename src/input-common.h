@@ -53,6 +53,7 @@ struct input_cfg {
 	int spectrogram_fft_size;
 	char *spectrogram_path;
 	int spectrogram_format;  // 0=bmp, 1=png, 2=jpg
+	int32_t spectrogram_display_bandwidth;  // 0 = use sample_rate
 } __attribute__((aligned(8)));
 
 struct input;   // forward declaration
