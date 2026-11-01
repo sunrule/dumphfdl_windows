@@ -4,6 +4,7 @@
 #include <libacars/vstring.h>           // la_vstring
 #include <libacars/json.h>
 #include "fmtr-json.h"
+#include "fmtr-text.h"                  // fmtr_text_format_decoded_msg (NEW)
 #include "output-common.h"              // fmtr_descriptor_t
 #include "util.h"                       // struct octet_string, Config, EOL
 #include "pdu.h"                        // struct hfdl_pdu_metadata
@@ -41,6 +42,12 @@ static void hfdl_format_json(la_vstring *vstr, void const *data) {
 	la_json_append_double(vstr, "noise_level", m->noise_floor);
 	la_json_append_double(vstr, "freq_skew", m->freq_err_hz);
 	la_json_append_char(vstr, "slot", m->slot);
+
+	// NEW: человекочитаемый текст ЭТОГО PDU.
+	// text_repr установлен в fmtr_json_format_decoded_msg.
+	if(m->text_repr != NULL) {
+		la_json_append_string(vstr, "text", m->text_repr);
+	}	
 }
 
 static bool fmtr_json_supports_data_type(fmtr_input_type_t type) {
@@ -50,6 +57,24 @@ static bool fmtr_json_supports_data_type(fmtr_input_type_t type) {
 static struct octet_string *fmtr_json_format_decoded_msg(struct metadata *metadata, la_proto_node *root) {
 	ASSERT(metadata != NULL);
 	ASSERT(root != NULL);
+
+	struct hfdl_pdu_metadata *hm = container_of(metadata, struct hfdl_pdu_metadata, metadata);
+
+	// NEW: получаем текст ЭТОГО PDU и сохраняем в hm->text_repr
+	// на время формирования JSON. После la_proto_tree_format_json
+	// освобождаем.
+	struct octet_string *text_msg = fmtr_text_format_decoded_msg(metadata, root);
+	if(text_msg != NULL) {
+		// strdup: text_msg->buf не гарантированно NUL-terminated?
+		// octet_string_new(buf, len) в fmtr-text.c - buf получен из
+		// la_vstring (который NUL-terminated). Но на всякий случай
+		// копируем len+1 байт.
+		hm->text_repr = XCALLOC(text_msg->len + 1, sizeof(char));
+		memcpy(hm->text_repr, text_msg->buf, text_msg->len);
+		hm->text_repr[text_msg->len] = '\0';
+		octet_string_destroy(text_msg);
+	}
+
 
 	// prepend the metadata node the the tree (and destroy it afterwards)
 	la_proto_node *hfdl_pdu = la_proto_node_new();
@@ -62,6 +87,11 @@ static struct octet_string *fmtr_json_format_decoded_msg(struct metadata *metada
 	struct octet_string *ret = octet_string_new(vstr->str, vstr->len);
 	la_vstring_destroy(vstr, false);
 	XFREE(hfdl_pdu);
+
+	// NEW: освобождаем текст после формирования JSON
+	XFREE(hm->text_repr);
+	hm->text_repr = NULL;
+
 	return ret;
 }
 

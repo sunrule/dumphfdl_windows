@@ -18,7 +18,8 @@ static char *format_timestamp(struct tm *tm) {
 
 	size_t bufsize = 30;
 	char *tbuf = XCALLOC(bufsize, sizeof(char));
-	strftime(tbuf, bufsize, "%Y/%m/%d,%T.000", tm);
+	/*strftime(tbuf, bufsize, "%Y/%m/%d,%T.000", tm);*/
+	strftime(tbuf, bufsize, "%Y/%m/%d,%H:%M:%S.000", tm);
 	return tbuf;
 }
 

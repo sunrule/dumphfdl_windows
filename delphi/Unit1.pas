@@ -45,15 +45,15 @@ implementation
 
 {$R *.dfm}
 
-// Р¤РѕСЂРІР°СЂРґ-РґРµРєР»Р°СЂР°С†РёСЏ: РєРѕР»Р±СЌРє РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РІ TDecodeThread.Execute
-// (РІС‹С€Рµ РїРѕ С„Р°Р№Р»Сѓ), Р° РѕРїСЂРµРґРµР»С‘РЅ РЅРёР¶Рµ.
+// Форвард-декларация: колбэк используется в TDecodeThread.Execute
+// (выше по файлу), а определён ниже.
 procedure HFDLMsgCallback(Msg: PAnsiChar; UserData: Pointer); stdcall; forward;
 
 // ---------------------------------------------------------------------------
-// РџРѕС‚РѕРє РґРµРєРѕРґРёСЂРѕРІР°РЅРёСЏ.
-// HFDL_DecodeFile Р±Р»РѕРєРёСЂСѓРµС‚ РІС‹Р·С‹РІР°СЋС‰РёР№ РїРѕС‚РѕРє РґРѕ РєРѕРЅС†Р° С„Р°Р№Р»Р°, РїРѕСЌС‚РѕРјСѓ
-// Р·Р°РїСѓСЃРєР°РµРј РµРіРѕ РІ РѕС‚РґРµР»СЊРЅРѕРј РїРѕС‚РѕРєРµ, С‡С‚РѕР±С‹ РЅРµ РїРѕРґРІРµС€РёРІР°С‚СЊ РёРЅС‚РµСЂС„РµР№СЃ.
-// Р”РѕСЃС‚СѓРї Рє VCL РёР· Execute С‚РѕР»СЊРєРѕ С‡РµСЂРµР· Synchronize.
+// Поток декодирования.
+// HFDL_DecodeFile блокирует вызывающий поток до конца файла, поэтому
+// запускаем его в отдельном потоке, чтобы не подвешивать интерфейс.
+// Доступ к VCL из Execute только через Synchronize.
 // ---------------------------------------------------------------------------
 type
   TDecodeThread = class(TThread)
@@ -75,8 +75,8 @@ type
 constructor TDecodeThread.Create(AOwner: TForm1; const AMcrFile, ASystable,
     ACacheDB, ASystableDB: string);
 begin
-  inherited Create(True);       // СЃРѕР·РґР°С‘Рј РїСЂРёРѕСЃС‚Р°РЅРѕРІР»РµРЅРЅС‹Рј, С‡С‚РѕР±С‹ РїРѕР»СЏ
-                                // Р±С‹Р»Рё Р·Р°РїРѕР»РЅРµРЅС‹ РґРѕ СЃС‚Р°СЂС‚Р° Execute
+  inherited Create(True);       // создаём приостановленным, чтобы поля
+                                // были заполнены до старта Execute
   FreeOnTerminate := True;
   FOwner := AOwner;
   FMcrFile := AMcrFile;
@@ -84,27 +84,27 @@ begin
   FCacheDB := ACacheDB;
   FSystableDB := ASystableDB;
   FRC := 0;
-  Resume;                       // С‚РµРїРµСЂСЊ РјРѕР¶РЅРѕ Р·Р°РїСѓСЃРєР°С‚СЊ
+  Resume;                       // теперь можно запускать
 end;
 
-// Р’С‹Р·С‹РІР°РµС‚СЃСЏ РІ Р“Р›РђР’РќРћРњ РїРѕС‚РѕРєРµ С‡РµСЂРµР· Synchronize - Р·РґРµСЃСЊ РјРѕР¶РЅРѕ С‚СЂРѕРіР°С‚СЊ VCL.
+// Вызывается в ГЛАВНОМ потоке через Synchronize - здесь можно трогать VCL.
 procedure TDecodeThread.SyncReportResult;
 begin
   case FRC of
     HFDL_OK:
-      FOwner.Memo1.Lines.Add(Format('--- Р“РѕС‚РѕРІРѕ: РґРµРєРѕРґРёСЂРѕРІР°РЅРёРµ Р·Р°РІРµСЂС€РµРЅРѕ (rc=%d)', [FRC]));
+      FOwner.Memo1.Lines.Add(Format('--- Готово: декодирование завершено (rc=%d)', [FRC]));
     HFDL_ERR_ARGS:
-      FOwner.Memo1.Lines.Add('РћС€РёР±РєР°: РЅРµРІРµСЂРЅС‹Рµ Р°СЂРіСѓРјРµРЅС‚С‹');
+      FOwner.Memo1.Lines.Add('Ошибка: неверные аргументы');
     HFDL_ERR_MCR:
-      FOwner.Memo1.Lines.Add('РћС€РёР±РєР°: РЅРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ РёР»Рё СЂР°Р·РѕР±СЂР°С‚СЊ MCR-С„Р°Р№Р»');
+      FOwner.Memo1.Lines.Add('Ошибка: не удалось открыть или разобрать MCR-файл');
     HFDL_ERR_NO_FREQ:
-      FOwner.Memo1.Lines.Add('РћС€РёР±РєР°: РЅРµС‚ С‡Р°СЃС‚РѕС‚ РєР°РЅР°Р»РѕРІ (РїСЂРѕРІРµСЂСЊС‚Рµ systable.conf)');
+      FOwner.Memo1.Lines.Add('Ошибка: нет частот каналов (проверьте systable.conf)');
     HFDL_ERR_INIT:
-      FOwner.Memo1.Lines.Add('РћС€РёР±РєР°: РЅРµ СѓРґР°Р»РѕСЃСЊ РёРЅРёС†РёР°Р»РёР·РёСЂРѕРІР°С‚СЊ РґРµРєРѕРґРµСЂ');
+      FOwner.Memo1.Lines.Add('Ошибка: не удалось инициализировать декодер');
     HFDL_ERR_ABORT:
-      FOwner.Memo1.Lines.Add('РћС€РёР±РєР°: РґРµРєРѕРґРёСЂРѕРІР°РЅРёРµ РїСЂРµСЂРІР°РЅРѕ');
+      FOwner.Memo1.Lines.Add('Ошибка: декодирование прервано');
   else
-    FOwner.Memo1.Lines.Add(Format('РќРµРёР·РІРµСЃС‚РЅС‹Р№ РєРѕРґ РІРѕР·РІСЂР°С‚Р°: %d', [FRC]));
+    FOwner.Memo1.Lines.Add(Format('Неизвестный код возврата: %d', [FRC]));
   end;
   FOwner.SetDecoding(False);
 end;
@@ -127,28 +127,28 @@ begin
   else
     stdb := PAnsiChar(AnsiString(FSystableDB));
 
-  // Р’С‹Р·РѕРІ DLL. Р‘Р»РѕРєРёСЂСѓРµС‚ РґРѕ РїРѕР»РЅРѕРіРѕ РґРµРєРѕРґРёСЂРѕРІР°РЅРёСЏ С„Р°Р№Р»Р°.
-  // РљРѕР»Р±СЌРє HFDLMsgCallback РїСЂРёР»РµС‚Р°РµС‚ РёР· СЂР°Р±РѕС‡РµРіРѕ РїРѕС‚РѕРєР° РґРµРєРѕРґРµСЂР° -
-  // С‚Р°Рј С‚РѕР»СЊРєРѕ PostMessage, VCL РЅРµ С‚СЂРѕРіР°РµРј.
+  // Вызов DLL. Блокирует до полного декодирования файла.
+  // Колбэк HFDLMsgCallback прилетает из рабочего потока декодера -
+  // там только PostMessage, VCL не трогаем.
   rc := HFDL_DecodeFile(
     PAnsiChar(AnsiString(FMcrFile)),
-    45.0,                    // bearing, РіСЂР°РґСѓСЃС‹
-    10.0,                    // elevation, РіСЂР°РґСѓСЃС‹
-    st,                      // systable.conf РёР»Рё nil
-    acdb,                    // SQLite-РєСЌС€ Р±РѕСЂС‚РѕРІ РёР»Рё nil
-    stdb,                    // SQLite РґР»СЏ PDU system table РёР»Рё nil
-    HFDL_FMT_TEXT,           // С„РѕСЂРјР°С‚: TEXT / JSON / BASESTATION
-    @HFDLMsgCallback,        // РћР‘Р«Р§РќРђРЇ РїСЂРѕС†РµРґСѓСЂР° (РЅРµ РјРµС‚РѕРґ РєР»Р°СЃСЃР°!)
-    FOwner);                 // userdata = Self С„РѕСЂРјС‹
+    45.0,                    // bearing, градусы
+    10.0,                    // elevation, градусы
+    st,                      // systable.conf или nil
+    acdb,                    // SQLite-кэш бортов или nil
+    stdb,                    // SQLite для PDU system table или nil
+    HFDL_FMT_TEXT,           // формат: TEXT / JSON / BASESTATION
+    @HFDLMsgCallback,        // ОБЫЧНАЯ процедура (не метод класса!)
+    FOwner);                 // userdata = Self формы
 
   FRC := rc;
   Synchronize(SyncReportResult);
 end;
 
 // ---------------------------------------------------------------------------
-// РљРѕР»Р±СЌРє СЃРѕРѕР±С‰РµРЅРёР№. Р’С‹Р·С‹РІР°РµС‚СЃСЏ РёР· Р РђР‘РћР§Р•Р“Рћ РџРћРўРћРљРђ РґРµРєРѕРґРµСЂР°.
-// Р—Р”Р•РЎР¬ РќР•Р›Р¬Р—РЇ РўР РћР“РђРўР¬ VCL РќРђРџР РЇРњРЈР® - С‚РѕР»СЊРєРѕ PostMessage.
-// UserData = Self С„РѕСЂРјС‹ (РїРµСЂРµРґР°РЅ РІ HFDL_DecodeFile).
+// Колбэк сообщений. Вызывается из РАБОЧЕГО ПОТОКА декодера.
+// ЗДЕСЬ НЕЛЬЗЯ ТРОГАТЬ VCL НАПРЯМУЮ - только PostMessage.
+// UserData = Self формы (передан в HFDL_DecodeFile).
 // ---------------------------------------------------------------------------
 procedure HFDLMsgCallback(Msg: PAnsiChar; UserData: Pointer); stdcall;
 var
@@ -156,14 +156,14 @@ var
 begin
   if (Msg = nil) or (UserData = nil) then
     Exit;
-  // РљРѕРїРёСЂСѓРµРј СЃС‚СЂРѕРєСѓ РІ РЅРѕРІСѓСЋ РїР°РјСЏС‚СЊ (Msg РІР°Р»РёРґРЅР° С‚РѕР»СЊРєРѕ РІРѕ РІСЂРµРјСЏ РІС‹Р·РѕРІР°)
+  // Копируем строку в новую память (Msg валидна только во время вызова)
   p := StrNew(Msg);
-  // РћС‚РїСЂР°РІР»СЏРµРј СѓРєР°Р·Р°С‚РµР»СЊ РіР»Р°РІРЅРѕРјСѓ РїРѕС‚РѕРєСѓ; С‚Р°Рј СЃС‚СЂРѕРєР° Р±СѓРґРµС‚ РѕСЃРІРѕР±РѕР¶РґРµРЅР°.
-  // Integer(p) - РїСЂСЏРјРѕРµ РїСЂРёРІРµРґРµРЅРёРµ СѓРєР°Р·Р°С‚РµР»СЏ (32-Р±РёС‚, D7)
+  // Отправляем указатель главному потоку; там строка будет освобождена.
+  // Integer(p) - прямое приведение указателя (32-бит, D7)
   PostMessage(TForm1(UserData).Handle, WM_HFDL_MSG, 0, Integer(p));
 end;
 
-// РћР±СЂР°Р±РѕС‚РєР° РІ РіР»Р°РІРЅРѕРј РїРѕС‚РѕРєРµ: Р±РµР·РѕРїР°СЃРЅРѕ РґРѕР±Р°РІР»СЏРµРј С‚РµРєСЃС‚ РІ РјРµРјРѕ
+// Обработка в главном потоке: безопасно добавляем текст в мемо
 procedure TForm1.OnDecodedMessage(var Msg: TMessage);
 var
   p: PAnsiChar;
@@ -174,7 +174,7 @@ begin
     try
       Memo1.Lines.Add(string(p));
     finally
-      StrDispose(p);   // РѕСЃРІРѕР±РѕР¶РґР°РµРј РєРѕРїРёСЋ СЃС‚СЂРѕРєРё
+      StrDispose(p);   // освобождаем копию строки
     end;
   end;
 end;
@@ -183,9 +183,9 @@ procedure TForm1.SetDecoding(AValue: Boolean);
 begin
   FDecoding := AValue;
   if AValue then
-    lblStatus.Caption := 'Р”РµРєРѕРґРёСЂРѕРІР°РЅРёРµ...'
+    lblStatus.Caption := 'Декодирование...'
   else
-    lblStatus.Caption := 'Р“РѕС‚РѕРІ';
+    lblStatus.Caption := 'Готов';
   btnDecode.Enabled := not AValue;
   btnBrowse.Enabled := not AValue;
 end;
@@ -193,27 +193,27 @@ end;
 procedure TForm1.FormCreate(Sender: TObject);
 begin
   Memo1.Clear;
-  Memo1.Lines.Add('dumphfdl DLL demo. Р’РµСЂСЃРёСЏ: ' + string(HFDL_Version));
-  Memo1.Lines.Add('Р’С‹Р±РµСЂРёС‚Рµ MCR-С„Р°Р№Р» Рё РЅР°Р¶РјРёС‚Рµ "Р”РµРєРѕРґРёСЂРѕРІР°С‚СЊ".');
+  Memo1.Lines.Add('dumphfdl DLL demo. Версия: ' + string(HFDL_Version));
+  Memo1.Lines.Add('Выберите MCR-файл и нажмите "Декодировать".');
   Memo1.Lines.Add('');
   FDecoding := False;
 end;
 
 procedure TForm1.FormCloseQuery(Sender: TObject; var CanClose: Boolean);
 begin
-  // РќРµ РґР°С‘Рј Р·Р°РєСЂС‹С‚СЊ С„РѕСЂРјСѓ РІРѕ РІСЂРµРјСЏ РґРµРєРѕРґРёСЂРѕРІР°РЅРёСЏ: HFDL_DecodeFile
-  // Р±Р»РѕРєРёСЂСѓРµС‚ РїРѕС‚РѕРє, Рё РїРѕС‚РѕРє РЅРµР»СЊР·СЏ РєРѕСЂСЂРµРєС‚РЅРѕ РїСЂРµСЂРІР°С‚СЊ РёР·РІРЅРµ.
+  // Не даём закрыть форму во время декодирования: HFDL_DecodeFile
+  // блокирует поток, и поток нельзя корректно прервать извне.
   if FDecoding then
   begin
     CanClose := False;
-    ShowMessage('Р”РѕР¶РґРёС‚РµСЃСЊ РѕРєРѕРЅС‡Р°РЅРёСЏ РґРµРєРѕРґРёСЂРѕРІР°РЅРёСЏ');
+    ShowMessage('Дождитесь окончания декодирования');
   end;
 end;
 
 procedure TForm1.FormDestroy(Sender: TObject);
 begin
-  // FThread СЃ FreeOnTerminate := True РѕСЃРІРѕР±РѕР¶РґР°РµС‚ СЃРµР±СЏ СЃР°Рј;
-  // Р·РґРµСЃСЊ С‚РѕР»СЊРєРѕ Р¶РґС‘Рј, РµСЃР»Рё РїРѕС‚РѕРє РµС‰С‘ Р¶РёРІ.
+  // FThread с FreeOnTerminate := True освобождает себя сам;
+  // здесь только ждём, если поток ещё жив.
   if FThread <> nil then
     FThread.WaitFor;
 end;
@@ -229,7 +229,7 @@ procedure TForm1.btnDecodeClick(Sender: TObject);
 begin
   if not FileExists(edMcrFile.Text) then
   begin
-    ShowMessage('РЈРєР°Р¶РёС‚Рµ СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёР№ MCR-С„Р°Р№Р»');
+    ShowMessage('Укажите существующий MCR-файл');
     Exit;
   end;
   Memo1.Clear;

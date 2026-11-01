@@ -22,6 +22,11 @@ struct hfdl_pdu_metadata {
 	// Start time of the input recording in microseconds since epoch (UTC).
 	// 0 when decoding from a live SDR stream.
 	uint64_t file_start_time_us;
+	// Временное поле: человекочитаемый текст ЭТОГО PDU.
+	// Заполняется в fmtr_json_format_decoded_msg перед вызовом
+	// la_proto_tree_format_json и освобождается сразу после.
+	// В остальное время - NULL.
+	char *text_repr;	
 };
 
 enum hfdl_pdu_direction {

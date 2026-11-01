@@ -42,7 +42,7 @@ PROJECT_DIR_WIN="$(cd "$PROJECT_DIR" && pwd -W)"
 BUILD_ROOT="${BUILD_ROOT:-$PROJECT_DIR/build}"
 DEPS_DIR="$BUILD_ROOT/deps-src"
 PREFIX_X64="${PREFIX_X64:-$BUILD_ROOT/prefix-x64}"   # не используется (x64 из pacman)
-PREFIX_X86="$BUILD_ROOT/prefix-x86"                   # i686-зависимости из исходников
+PREFIX_X86="$BUILD_ROOT/prefix-i686"                   # i686-зависимости из исходников
 X64_PREFIX="$BUILD_ROOT/prefix-x64"                   # x64 liquid/libacars (из исходников)
 DIST_DIR="$PROJECT_DIR/dist"
 
@@ -66,20 +66,41 @@ if [ -z "$PACMAN" ]; then
     done
 fi
 if [ -z "$PACMAN" ]; then
-    die "pacman не найден. Запустите скрипт из MSYS2 (MinGW x64) shell."
+    echo "[error] pacman не найден. Запустите скрипт из MSYS2 (MinGW x64) shell." >&2
+    exit 1
 fi
 
 log()  { echo -e "\033[1;32m==>\033[0m $*"; }
 warn() { echo -e "\033[1;33m[warn]\033[0m $*" >&2; }
 die()  { echo -e "\033[1;31m[error]\033[0m $*" >&2; exit 1; }
 
-# ninja обёртка: запуск через cmd.exe с выставленными TMP/TEMP
-# (MSYS не пробрасывает эти переменные в нативные процессы корректно)
+# ninja-обёртка: конвертирует MSYS-пути в Windows-пути и вызывает ninja
+# напрямую. TMP/TEMP уже экспортированы в начале скрипта в Windows-формате,
+# поэтому обёртка через cmd.exe больше не нужна (именно она ломалась на
+# путях вида /dev/sunrule-dumphfdl/... и /usr/bin/ninja).
 ninja() {
-    local args="$*"
-    local tmpwin
-    tmpwin="$(cd "$TMP_BUILD_DIR" 2>/dev/null && pwd -W)" || tmpwin="$TMP_BUILD_DIR"
-    C:/Windows/System32/cmd.exe /C "set TMP=$tmpwin&& set TEMP=$tmpwin&& $(command -v ninja) $args"
+    local -a args=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -C)
+                args+=("-C")
+                shift
+                [ $# -gt 0 ] || die "ninja: -C без аргумента"
+                args+=("$(cygpath -w "$1")")
+                ;;
+            -*)
+                args+=("$1")
+                ;;
+            /*)
+                args+=("$(cygpath -w "$1")")
+                ;;
+            *)
+                args+=("$1")
+                ;;
+        esac
+        shift
+    done
+    command ninja "${args[@]}"
 }
 
 DEPS_ONLY=0

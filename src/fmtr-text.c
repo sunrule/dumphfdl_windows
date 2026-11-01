@@ -27,7 +27,8 @@ static la_vstring *format_timestamp(struct timeval tv) {
 	struct tm *tmstruct = (Config.utc == true ? gmtime(&seconds) : localtime(&seconds));
 
 	char tbuf[30], tzbuf[8];
-	strftime(tbuf, sizeof(tbuf), "%F %T", tmstruct);
+	/*strftime(tbuf, sizeof(tbuf), "%F %T", tmstruct);*/
+	strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", tmstruct);
 	strftime(tzbuf, sizeof(tzbuf), "%Z", tmstruct);
 
 	la_vstring *vstr = la_vstring_new();
@@ -39,7 +40,7 @@ static la_vstring *format_timestamp(struct timeval tv) {
 	return vstr;
 }
 
-static struct octet_string *fmtr_text_format_decoded_msg(struct metadata *metadata, la_proto_node *root) {
+struct octet_string *fmtr_text_format_decoded_msg(struct metadata *metadata, la_proto_node *root) {
 	ASSERT(metadata != NULL);
 	ASSERT(root != NULL);
 

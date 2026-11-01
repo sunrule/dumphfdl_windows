@@ -316,8 +316,8 @@ static void usage() {
 	describe_option("--station-id <string>", "Receiver site identifier", 1);
 	fprintf(stderr, "%*sMaximum length: %u characters\n", USAGE_OPT_NAME_COLWIDTH, "", STATION_ID_LEN_MAX);
 	describe_option("--aircraft-cache-ttl <integer>", "How long to keep aircraft ID to ICAO mappings in the cache", 1);
-	describe_option("--ac-cache-db <string>", "Store aircraft ID to ICAO mappings in a SQLite database file (persists across runs)", 1);
 	fprintf(stderr, "%*sDefault: %ld seconds\n", USAGE_OPT_NAME_COLWIDTH, "", AC_CACHE_TTL_DEFAULT);
+	describe_option("--ac-cache-db <string>", "Store aircraft ID to ICAO mappings in a SQLite database file (persists across runs)", 1);
 
 	fprintf(stderr, "\nText output formatting options:\n");
 	describe_option("--utc", "Use UTC timestamps in output and file names", 1);

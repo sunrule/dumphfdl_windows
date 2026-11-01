@@ -84,6 +84,7 @@ struct metadata *hfdl_pdu_metadata_create() {
 	m->mpdu_time.tv_sec = 0;
 	m->mpdu_time.tv_usec = 0;
 	m->file_start_time_us = 0;
+	m->text_repr = NULL;                // NEW	
 	return &m->metadata;
 }
 
@@ -185,6 +186,8 @@ static struct metadata *hfdl_pdu_metadata_copy(struct metadata const *m) {
 	struct hfdl_pdu_metadata *hm = container_of(m, struct hfdl_pdu_metadata, metadata);
 	NEW(struct hfdl_pdu_metadata, copy);
 	memcpy(copy, hm, sizeof(struct hfdl_pdu_metadata));
+	// text_repr - временный указатель, не копируем (иначе double-free).
+	copy->text_repr = NULL;             // NEW	
 	return &copy->metadata;
 }
 
@@ -193,6 +196,8 @@ static void hfdl_pdu_metadata_destroy(struct metadata *m) {
 		return;
 	}
 	struct hfdl_pdu_metadata *hm = container_of(m, struct hfdl_pdu_metadata, metadata);
+	// text_repr должен быть NULL (освобождён в fmtr_json_format_decoded_msg)
+	XFREE(hm->text_repr);               // безопасно: XFREE(NULL) ничего не делает
 	XFREE(hm);
 }
 
