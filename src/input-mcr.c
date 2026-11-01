@@ -49,6 +49,7 @@
 #include "block.h"          // block_*
 #include "input-common.h"   // input, sample_format, input_vtable
 #include "input-helpers.h"  // complex_samples_produce
+#include "spectrogram.h"    // spectrogram_accumulate
 #include "input-mcr.h"      // mcr_input_vtable, mcr_input_preload_config
 #include "util.h"           // debug_print, ASSERT, XCALLOC, NEW, container_of
 #include "globals.h"        // do_exit
@@ -312,6 +313,7 @@ void *mcr_input_thread(void *ctx) {
 		}
 		input->convert_sample_buffer(input, inbuf, len, outbuf);
 		complex_samples_produce(circ_buffer, outbuf, samples_read);
+		spectrogram_accumulate(outbuf, samples_read);
 	} while(len > 0 && do_exit == 0);
 	fclose(mcr->fh);
 	mcr->fh = NULL;

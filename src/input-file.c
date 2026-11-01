@@ -9,6 +9,7 @@
 #include "block.h"          // block_*
 #include "input-common.h"   // input, sample_format, input_vtable
 #include "input-helpers.h"  // get_sample_full_scale_value, get_sample_size
+#include "spectrogram.h"    // spectrogram_accumulate
 #include "util.h"	        // debug_print, ASSERT, XCALLOC
 #include "globals.h"        // do_exit
 
@@ -61,6 +62,7 @@ void *file_input_thread(void *ctx) {
 		}
 		input->convert_sample_buffer(input, inbuf, len, outbuf);
 		complex_samples_produce(circ_buffer, outbuf, samples_read);
+		spectrogram_accumulate(outbuf, samples_read);
 	} while(len > 0 && do_exit == 0);
 	fclose(file_input->fh);
 	file_input->fh = NULL;

@@ -38,6 +38,12 @@ struct input_cfg *input_cfg_create() {
 	cfg->gain = AUTO_GAIN;
 	cfg->bearing = 0.0;
 	cfg->elevation = 0.0;
+	cfg->spectrogram_enabled = false;
+	cfg->spectrogram_width = 0;
+	cfg->spectrogram_height = 0;
+	cfg->spectrogram_fft_size = 0;
+	cfg->spectrogram_path = NULL;
+	cfg->spectrogram_format = 0;
 	return cfg;
 }
 

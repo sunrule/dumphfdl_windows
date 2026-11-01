@@ -27,6 +27,7 @@
 #include "input-common.h"       // sample_format_t, input_create
 #include "input-mcr.h"          // mcr_input_preload_config
 #include "input-helpers.h"      // sample_format_from_string
+#include "spectrogram.h"        // spectrogram_*
 #include "output-common.h"      // output_*, fmtr_*
 #include "kvargs.h"             // kvargs
 #include "hfdl.h"               // hfdl_channel_create
@@ -291,6 +292,7 @@ static void usage() {
 	describe_option("CF32", "32-bit float, little-endian (eg. Airspy HF+)", 2);
 	describe_option("--read-buffer-size <integer>", "Number of bytes to read from file in one batch", 1);
 	describe_option("--file-start-time USEC", "Start time of I/Q file in microseconds since epoch (UTC). For MCR input this overrides the time from the file header", 1);
+	describe_option("--create-sono bmp|png|jpg:path=FILE", "Create a spectrogram image from the input I/Q samples (file mode only)", 1);
 
 	fprintf(stderr, "\nmcr_file_options:\n");
 	describe_option("--mcr-file <string>", "Read multichannel MCR recording from file", 1);
@@ -371,6 +373,7 @@ int32_t main(int32_t argc, char **argv) {
 #define OPT_FREQ_OFFSET 28
 #define OPT_READ_BUFFER_SIZE 29
 #define OPT_FILE_START_TIME 84
+#define OPT_CREATE_SONO 85
 #define OPT_FFT_THREAD_CNT 30
 
 #define OPT_OUTPUT 40
@@ -430,6 +433,7 @@ int32_t main(int32_t argc, char **argv) {
 		{ "freq-offset",        required_argument,  NULL,   OPT_FREQ_OFFSET },
 		{ "read-buffer-size",   required_argument,  NULL,   OPT_READ_BUFFER_SIZE },
 		{ "file-start-time",    required_argument,  NULL,   OPT_FILE_START_TIME },
+		{ "create-sono",        required_argument,  NULL,   OPT_CREATE_SONO },
 		{ "fft-threads",        required_argument,  NULL,   OPT_FFT_THREAD_CNT },
 		{ "output",             required_argument,  NULL,   OPT_OUTPUT },
 		{ "output-queue-hwm",   required_argument,  NULL,   OPT_OUTPUT_QUEUE_HWM },
@@ -572,6 +576,40 @@ int32_t main(int32_t argc, char **argv) {
 				}
 				input_cfg->file_start_time_us = (int64_t)val;
 				fprintf(stderr, "File start time set to: %llu microseconds since epoch\n", val);
+				break;
+			}
+			case OPT_CREATE_SONO: {
+				char *arg = strdup(optarg);
+				if(arg == NULL) {
+					fprintf(stderr, "Parameter error: --create-sono: out of memory\n");
+					return 1;
+				}
+				char *fmt = strtok(arg, ":");
+				char *path_arg = strtok(NULL, "");
+				if(fmt == NULL || path_arg == NULL) {
+					fprintf(stderr, "Parameter error: --create-sono: expected fmt:path=...\n");
+					free(arg);
+					return 1;
+				}
+				char *path = path_arg;
+				if(strncmp(path_arg, "path=", 5) == 0) {
+					path = path_arg + 5;
+				}
+				int format = 0;
+				if(strcmp(fmt, "png") == 0) format = 1;
+				else if(strcmp(fmt, "jpg") == 0) format = 2;
+				else if(strcmp(fmt, "bmp") != 0) {
+					fprintf(stderr, "Parameter error: --create-sono: invalid format '%s' (bmp/png/jpg)\n", fmt);
+					free(arg);
+					return 1;
+				}
+				input_cfg->spectrogram_enabled = true;
+				input_cfg->spectrogram_format = format;
+				input_cfg->spectrogram_path = strdup(path);
+				input_cfg->spectrogram_width = 512;
+				input_cfg->spectrogram_height = 256;
+				input_cfg->spectrogram_fft_size = 256;
+				free(arg);
 				break;
 			}
 			case OPT_FFT_THREAD_CNT:
@@ -806,6 +844,11 @@ int32_t main(int32_t argc, char **argv) {
 		XFREE(frequencies);
 		return 1;
 	}
+	if(spectrogram_init(input_cfg) < 0) {
+		fprintf(stderr, "Unable to initialize spectrogram\n");
+		XFREE(frequencies);
+		return 1;
+	}
 
 	csdr_fft_init(fft_thread_cnt);
 
@@ -928,9 +971,11 @@ int32_t main(int32_t argc, char **argv) {
 	for(int32_t i = 0; i < channel_cnt; i++) {
 		hfdl_channel_destroy(channel_blocks[i]);
 	}
+	spectrogram_write();
 	input_destroy(input);
 	input_cfg_destroy(input_cfg);
 	XFREE(frequencies);
+	spectrogram_cleanup();
 
 	fft_destroy(fft);
 	csdr_fft_destroy();

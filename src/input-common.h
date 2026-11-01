@@ -38,7 +38,7 @@ struct input_cfg {
 	int32_t centerfreq;
 	int32_t freq_offset;
 	int32_t read_buffer_size;
-	// Start time of the input file in microseconds since epoch (UTC).
+	// Start time of the input recording in microseconds since epoch (UTC).
 	// Used to compute real MPDU timestamps when decoding from files.
 	// 0 means "not set" (fall back to wall-clock time).
 	// For MCR input this is filled from the file header (beg_time) unless
@@ -46,7 +46,14 @@ struct input_cfg {
 	int64_t file_start_time_us;
 	input_type type;
 	sample_format sfmt;
-};
+	// Spectrogram generation (file inputs only).
+	bool spectrogram_enabled;
+	int spectrogram_width;
+	int spectrogram_height;
+	int spectrogram_fft_size;
+	char *spectrogram_path;
+	int spectrogram_format;  // 0=bmp, 1=png, 2=jpg
+} __attribute__((aligned(8)));
 
 struct input;   // forward declaration
 

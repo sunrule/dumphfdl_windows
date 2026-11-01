@@ -294,6 +294,7 @@ add_library (dumphfdl_base OBJECT
 	systable_db.c
 	util.c
 	win32_compat.c
+	spectrogram.c
 	${CMAKE_CURRENT_BINARY_DIR}/version.c
 	${dumphfdl_extra_sources}
 )
