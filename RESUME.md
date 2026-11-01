@@ -3,9 +3,10 @@
 ## Где что лежит
 
 - **Репозиторий**: `sunrule/dumphfdl_windows`, ветка `master`
-- **Последний коммит**: `e16970e` — «Add formatted text output to JSON and Windows fixes»
-- **Предыдущий**: `b249ea9` — «Add real MPDU start time for IQ and MCR file decoding»
-- **До этого**: `d2729b0` — «Add Windows DLL API, SQLite persistence, and one-command build script»
+- **Последний коммит**: `9c66f59` — «Add spectrogram generation for file inputs»
+- **Предыдущий**: `e16970e` — «Add formatted text output to JSON and Windows fixes»
+- **До этого**: `b249ea9` — «Add real MPDU start time for IQ and MCR file decoding»
+- **Изначальный**: `d2729b0` — «Add Windows DLL API, SQLite persistence, and one-command build script»
 
 ## Артефакты
 
@@ -26,8 +27,9 @@
    - Время от `c->sample_cnt` → не зависит от `--read-buffer-size`
    - JSON: `mpdu_sec`/`mpdu_usec`
 7. **JSON с текстом**: в JSON включён человекочитаемый текст PDU (`text` field) через общий text-форматтер
-8. **Windows-фиксы**: `strftime %F` → `%Y-%m-%d %H:%M:%S` в text/basestation-форматтерах
-9. **Delphi-примеры**: кодировка переведена в Windows-1251 для Delphi 7 IDE
+8. **Спектрограмма**: `--create-sono bmp|png|jpg:path=FILE` — 512×256, dB-шкала 30-120 dB, бирюзовая схема; прореживание по времени (степень 2) при длительности >5 с
+9. **Windows-фиксы**: `strftime %F` → `%Y-%m-%d %H:%M:%S` в text/basestation-форматтерах
+10. **Delphi-примеры**: кодировка переведена в Windows-1251 для Delphi 7 IDE
 
 ## Известное
 
