@@ -14,7 +14,7 @@
 
 #define SP_DEFAULT_WIDTH      512
 #define SP_DEFAULT_HEIGHT     256
-#define SP_DEFAULT_FFT_SIZE   256
+#define SP_DEFAULT_FFT_SIZE   512
 #define SP_FLT_EPSILON        1.192092896e-07f
 
 struct spectrogram_state {
@@ -35,7 +35,6 @@ struct spectrogram_state {
 	float complex *fft_in;
 	float complex *fft_out;
 	struct fft_plan_s *fft_plan;
-	float *window;
 
 	float db_min;
 	float db_max;
@@ -59,16 +58,8 @@ static uint8_t sp_db_to_color(float db) {
 	return (uint8_t)(val * 255.0f);
 }
 
-static void sp_apply_window(void) {
-	for(int i = 0; i < sp.fft_size; i++) {
-		float w = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * i / (sp.fft_size - 1)));
-		sp.fft_in[i] *= w;
-	}
-}
-
 static void sp_compute_frame(void) {
 	if(sp.frame_count >= sp.width) return;
-	sp_apply_window();
 	csdr_fft_execute(sp.fft_plan);
 	for(int j = 0; j < sp.height; j++) {
 		float mag = cabsf(sp.fft_out[j]);
@@ -85,7 +76,6 @@ static void sp_compute_frame(void) {
 
 static void sp_compute_frame_range_pass(void) {
 	if(sp.frame_count >= sp.width) return;
-	sp_apply_window();
 	csdr_fft_execute(sp.fft_plan);
 	for(int j = 0; j < sp.height; j++) {
 		float mag = cabsf(sp.fft_out[j]);
@@ -126,23 +116,12 @@ int spectrogram_init(struct input_cfg const *cfg) {
 		return -1;
 	}
 
-	if(sp.fft_size > sp.height) {
-		fprintf(stderr, "Spectrogram: FFT size %d exceeds height %d, clamping\n",
-				sp.fft_size, sp.height);
-		sp.fft_size = sp.height;
-	}
-
 	sp.fft_in = XCALLOC(sp.fft_size, sizeof(float complex));
 	sp.fft_out = XCALLOC(sp.fft_size, sizeof(float complex));
 	sp.fft_plan = csdr_make_fft_c2c(sp.fft_size, sp.fft_in, sp.fft_out, 1, 0);
 	if(sp.fft_plan == NULL) {
 		fprintf(stderr, "Spectrogram: failed to create FFT plan\n");
 		return -1;
-	}
-
-	sp.window = XCALLOC(sp.fft_size, sizeof(float));
-	for(int i = 0; i < sp.fft_size; i++) {
-		sp.window[i] = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * i / (sp.fft_size - 1)));
 	}
 
 	sp.image = XCALLOC((size_t)sp.width * sp.height, 3);
@@ -180,21 +159,42 @@ void spectrogram_accumulate(float complex const *samples, size_t count) {
 int spectrogram_write(void) {
 	if(!sp.enabled || sp.sample_count == 0) return 0;
 
-	int64_t total_frames = (int64_t)sp.sample_count / sp.fft_size;
-	int stride = 1;
-	if(total_frames > sp.width) {
-		stride = (int)(total_frames / sp.width);
-		int pow2 = 1;
-		while(pow2 < stride) pow2 <<= 1;
-		stride = pow2;
-		if(stride < 1) stride = 1;
-	}
-	int hop = sp.fft_size * stride;
+	// Match Delphi implementation:
+	// - 512-point FFT (default)
+	// - hop = 1221 samples (at 24000 Hz)
+	// - initial offset = 256 samples
+	// - rectangular window (no windowing)
+	// - only bins 0..height-1 from FFT output
+	// - at least 'width' frames
 
+	int hop = 1221;
+	int offset = 256;
+	int fft_size = sp.fft_size;
+
+	if(fft_size > sp.height) {
+		fft_size = sp.height;
+	}
+
+	// Number of available frames
+	int64_t available = 0;
+	if(sp.sample_count > (size_t)(offset + fft_size)) {
+		available = (sp.sample_count - offset) / hop;
+	}
+	int64_t total_frames = available;
+	if(total_frames < sp.width) {
+		total_frames = sp.width;
+	}
+
+	// Recreate FFT plan if size changed
+	// (in current implementation, fft_size is fixed at init)
 	sp.frame_count = 0;
 	sp.db_range_set = false;
-	for(size_t i = 0; i + sp.fft_size <= sp.sample_count && sp.frame_count < sp.width; i += (size_t)hop) {
-		memcpy(sp.fft_in, sp.samples + i, sp.fft_size * sizeof(float complex));
+	for(int64_t i = 0; i < total_frames && sp.frame_count < sp.width; i++) {
+		size_t start = (size_t)(offset + i * hop);
+		if(start + (size_t)fft_size > sp.sample_count) {
+			break;
+		}
+		memcpy(sp.fft_in, sp.samples + start, (size_t)fft_size * sizeof(float complex));
 		sp_compute_frame_range_pass();
 	}
 	if(!sp.db_range_set) {
@@ -210,16 +210,20 @@ int spectrogram_write(void) {
 	}
 
 	sp.frame_count = 0;
-	for(size_t i = 0; i + sp.fft_size <= sp.sample_count && sp.frame_count < sp.width; i += (size_t)hop) {
-		memcpy(sp.fft_in, sp.samples + i, sp.fft_size * sizeof(float complex));
+	for(int64_t i = 0; i < total_frames && sp.frame_count < sp.width; i++) {
+		size_t start = (size_t)(offset + i * hop);
+		if(start + (size_t)fft_size > sp.sample_count) {
+			break;
+		}
+		memcpy(sp.fft_in, sp.samples + start, (size_t)fft_size * sizeof(float complex));
 		sp_compute_frame();
 	}
 
 	sp.end_col = sp.frame_count;
 	sp_draw_end_line();
 
-	fprintf(stderr, "Spectrogram: wrote %d columns (stride %d, dB range %.1f..%.1f) from %zu samples\n",
-			sp.frame_count, stride, sp.db_min, sp.db_max, sp.sample_count);
+	fprintf(stderr, "Spectrogram: wrote %d columns (hop=%d, dB range %.1f..%.1f) from %zu samples\n",
+			sp.frame_count, hop, sp.db_min, sp.db_max, sp.sample_count);
 
 	int rc = 0;
 	switch(sp.format) {
@@ -246,7 +250,6 @@ void spectrogram_cleanup(void) {
 	if(!sp.enabled) return;
 	XFREE(sp.samples);
 	XFREE(sp.image);
-	XFREE(sp.window);
 	if(sp.fft_plan) csdr_destroy_fft_c2c(sp.fft_plan);
 	XFREE(sp.fft_in);
 	XFREE(sp.fft_out);

@@ -608,7 +608,7 @@ int32_t main(int32_t argc, char **argv) {
 				input_cfg->spectrogram_path = strdup(path);
 				input_cfg->spectrogram_width = 512;
 				input_cfg->spectrogram_height = 256;
-				input_cfg->spectrogram_fft_size = 256;
+				input_cfg->spectrogram_fft_size = 512;
 				free(arg);
 				break;
 			}
